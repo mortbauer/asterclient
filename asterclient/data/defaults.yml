@@ -1,0 +1,47 @@
+# aster client default configuration, in order to work the ASTER_ROOT
+# environment variable must be set to the code aster root environment variable
+#
+# the file format is yaml: http://pyyaml.org/wiki/PyYAMLDocumentation
+#
+# you can also replace the quiet complicated looking stuff with absolute paths
+# but actually this complicated looking stuff helps to keep the logic behind
+# the scence very simple, so no magic is happening here. As a short
+# aexplanation, the ``!!python/object/apply:os.getenv ["ASTER_ROOT"]`` just
+# calls the ``os.getenv`` function with ``ASTER_ROOT`` as its argument. For
+# more info look: http://pyyaml.org/wiki/PyYAMLDocumentation#Objects
+#
+# author: martin ortbauer <mortbauer@gmail.com>
+# date: 20.03.2013
+#
+version: &version "STA11.2"
+aster_root: &aster_root !!python/object/apply:os.getenv ["ASTER_ROOT"]
+# path to asteru
+aster: !!python/object/apply:os.path.join [*aster_root,*version,"asteru"]
+# path of the bibpyt directory
+bibpyt: !!python/object/apply:os.path.join [*aster_root,*version,"bibpyt"]
+# path to the directory cata.py is located, well not used for now, link it into Cata
+cata: !!python/object/apply:os.path.join [*aster_root,*version,"commande"]
+# path to the elements
+elements: !!python/object/apply:os.path.join [*aster_root,*version,"elements"]
+# path to the Code Aster tools
+rep_outils: !!python/object/apply:os.path.join [*aster_root,"outils"]
+# path to the material properties
+rep_mat: !!python/object/apply:os.path.join [*aster_root,*version,"materiau"]
+# directory of external datas (geometrical datas or properties...)
+rep_dex: !!python/object/apply:os.path.join [*aster_root,*version,""]
+# maximum size of the memory taken by the execution (in MB)
+memory: 
+# limit of the time of the execution (in seconds)
+tpmax: 900
+# maximum size of the memory taken by the execution (in Mw)
+memjeveux: 64.0
+# limit of the size of the results database 
+max_base:  
+#  execution mode (interactive or batch)
+mode: "interactif"
+#  as 'python -i' works, it allows to enter commands after the execution of the command file
+interact: False
+# force to flush of the output after each line
+suivi_batch: True    
+# only check the syntax of the command file is done
+verif: False

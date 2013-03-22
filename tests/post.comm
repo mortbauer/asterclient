@@ -1,0 +1,203 @@
+# bike-frame.comm is a code-aster command file for the study case of a bike frame
+# Start
+
+from math import *
+import datetime
+import numpy
+from copy import copy
+
+RESULTDIR='/data/Documents/Studies/9.Semester/317512ProjectLeichtbau/beam-model/protocol/'
+
+def nu(E,G):
+    return float(E)/(2*G)-1
+
+def ctl(F,uy,ux):
+    """ Berechnet die Tretlagersteifigkeit """
+    return abs(float(F)/(uy**2+ux**2)**0.5)
+
+def clk(F,u):
+    """ Berechnet die Lenkkopfsteifigkeit """
+    l2 = 400
+    return abs(float(F)/degrees(atan(float(u)/l2)))
+
+def title(string):
+    return '\n{0}\n{1}\n\n'.format(string,'#'*len(string))
+
+def write_si_vmises_max(f,si_vmises_max):
+    f.write('si_vmises_max = {0} N/mm^2\t'.format(si_vmises_max))
+    if si_vmises_max >= alu_Rp02:
+        f.write('Attention should be smaller then {0} N/mm²\n'.format(alu_Rp02))
+    else:
+        f.write('\n')
+
+def write_si_principal_max(f,si_principal_max):
+    f.write('si_principal_max = {0} N/mm^2'.format(si_principal_max))
+    if si_principal_max >= alu_Rp02:
+        f.write('\tAttention should be smaller then {0} N/mm²\n'.format(alu_Rp02))
+    else:
+        f.write('\n')
+
+def write_sixx_weld(f,sixx):
+    f.write('sixx_weld_max = {0} N/mm^2'.format(sixx))
+    if sixx >= sixx_weld_max_zul:
+        f.write('\tAttention should be smaller then {0} N/mm²\n'.format(sixx_weld_max_zul))
+    else:
+        f.write('\n')
+
+def write_buckling_ration(f,min_buckling_ratio):
+    f.write('minimal buckling ratio = {}\t'.format(min_buckling_ratio))
+    if abs(min_buckling_ratio) <=1:
+        f.write('Attention minimal buckling ratio is smaller than 1.\n')
+    else:
+        f.write('\n')
+
+study = ['01_lenkkopfsteifigkeit']
+bar_parts = []
+beam_parts = ['forklong']
+boundaries = [{'DRY': 0, 'DRX': 0, 'DRZ': 0, 'GROUP_NO': ('p_f_0_l', 'p_f_0_r'), 'DZ': 0, 'DX': 0, 'DY': 0}, {'GROUP_NO': 'p_f_3a', 'DX': 0}]
+liaisons = [{'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DX', 'DDL_2': 'DX', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DY', 'DDL_2': 'DY', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DZ', 'DDL_2': 'DZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DRZ', 'DDL_2': 'DRZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DX', 'DDL_2': 'DX', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DY', 'DDL_2': 'DY', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DZ', 'DDL_2': 'DZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DRZ', 'DDL_2': 'DRZ', 'COEF_MULT_1': 1}]
+liaisons_solide = []
+forces = [{'FX': -100, 'GROUP_NO': 'p_fl_5'}]
+displacement_nodes = ['p_fl_7']
+study_type = params['study_type'] #['linear']
+
+
+
+POURSUITE(PAR_LOT='NON');
+
+DEFI_FICHIER(UNITE=40, FICHIER='vmises-check.table')
+
+IMPR_RESU(UNITE=40,FORMAT='RESULTAT',RESU=_F(RESULTAT=RESU,MAILLE='M101',NOM_CHAM='SIPM_ELNO'));
+
+weld_sxx=WELDN.EXTR_TABLE('SIXX').valeurs
+
+si_xx=SIGM.EXTR_COMP('SIXX',[]).valeurs
+si_yy=SIGM.EXTR_COMP('SIYY',[]).valeurs
+si_zz=SIGM.EXTR_COMP('SIZZ',[]).valeurs
+si_xy=SIGM.EXTR_COMP('SIXY',[]).valeurs
+si_xz=SIGM.EXTR_COMP('SIXZ',[]).valeurs
+si_yz=SIGM.EXTR_COMP('SIYZ',[]).valeurs
+
+si_vmises=VMIS.EXTR_COMP('X2',[]).valeurs
+si_vmises_max = si_vmises.max()
+si_principal_max = si_xx.max()
+
+if not 'fatigue' in study_type == 0:
+    crit_buckling_loads = [ abs(crit_bu['CHAR_CRIT',i]) for i in range(10)[1:] ]
+    min_buckling_ratio = min(crit_buckling_loads)
+else:
+    min_buckling_ratio = -0
+
+if '01_lenkkopfsteifigkeit' in study:
+    m = MASS['MASSE',1]
+    with open(RESULTDIR+'00_general.resu','w') as f:
+        f.write(title('mass'))
+        f.write('m = {0} kg'.format(m))
+        if m >= 2.5:
+            f.write('Attention should be smaller then 2.5 kg')
+        else:
+            f.write('\n')
+
+    with open(RESULTDIR+'01_lenkkopfsteifigkeit.resu','w') as f:
+        f.write(title('lenkkopfsteifigkeit'))
+        u_mp = DISP['DX',1]
+        CLK = clk(100,u_mp)
+        STW = CLK/m
+        write_si_vmises_max(f,si_vmises_max)
+        write_si_principal_max(f,si_principal_max)
+        write_buckling_ration(f,min_buckling_ratio)
+        f.write('CLK = {0} Nm/°\t'.format(CLK))
+        if CLK >= 80 and CLK <= 120:
+            f.write('\n')
+        else:
+            f.write('Attention should be between 80 and 120 Nm/° \n')
+
+        f.write('STW = {0} Nm/°kg\t'.format(STW))
+        if STW >= 50 and STW <= 115:
+            f.write('\n')
+        else:
+            f.write('Attention should be between 50 and 115 Nm/°kg\n')
+
+elif '02_tretlagersteifigkeit' in study:
+    with open(RESULTDIR+'02_tretlagersteifigkeit.resu','w') as f:
+        f.write(title('tretlagersteifigkeit'))
+        write_si_vmises_max(f,si_vmises_max)
+        write_si_principal_max(f,si_principal_max)
+        write_buckling_ration(f,min_buckling_ratio)
+        uz_tret = DISP['DZ',1]
+        uy_tret = DISP['DX',1]
+        CTL = ctl(1000,uz_tret,uy_tret)
+        f.write('CTL = {0} Nm/°\t'.format(CTL))
+        if CTL >= 50 and CTL <= 100:
+            f.write('\n')
+        else:
+            f.write('Attention should be between 50 and 100 Nm/° \n')
+
+elif '03_hinterbausteifigkeit' in study:
+    with open(RESULTDIR+'03_hinterbausteifigkeit.resu','w') as f:
+        f.write(title('hinterbausteifigkeit'))
+        write_si_vmises_max(f,si_vmises_max)
+        write_si_principal_max(f,si_principal_max)
+        write_buckling_ration(f,min_buckling_ratio)
+        ux1 = DISP['DX',1]
+        ux2 = DISP['DX',2]
+        if abs(ux1 + ux2) > 1e-3:
+            f.write('ux_left and ux_right aren\'t identical.\n')
+        elif abs(ux1) > 3.5:
+            f.write('Attention should be smaller then 3.5 mm\n')
+        else:
+            f.write('ux = {0} mm\n'.format(ux1))
+elif '04_maximallast_sprung' in study:
+    with open(RESULTDIR+'04_maximallast_sprung.resu','w') as f:
+        f.write(title('maximallast sprung'))
+        write_si_vmises_max(f,si_vmises_max)
+        write_si_principal_max(f,si_principal_max)
+        write_buckling_ration(f,min_buckling_ratio)
+        uz = DISP['DZ',1]
+        f.write('uz = {0} mm\n'.format(uz))
+elif '05_maximallast_wiegetritt' in study:
+    with open(RESULTDIR+'05_maximalbelastung_wiegetritt.resu','w') as f:
+        f.write(title('maximallast wiegetritt'))
+        write_si_vmises_max(f,si_vmises_max)
+        write_si_principal_max(f,si_principal_max)
+        write_buckling_ration(f,min_buckling_ratio)
+        uz = DISP['DZ',1]
+        f.write('uz = {0} mm\n'.format(uz))
+elif '06_ermuedung_sprung' in study:
+    with open(RESULTDIR+'06_ermuedung_sprung_700.resu','w') as f:
+        f.write(title('ermüdung sprung 700'))
+        write_si_vmises_max(f,si_vmises.min())
+        write_si_principal_max(f,si_xx.min())
+        write_buckling_ration(f,min_buckling_ratio)
+        uz = DISP['DZ',1]
+        f.write('uz = {0} mm\n'.format(uz))
+        #mymax = si_xx.argmax()
+        #f.write('si_xx = {0} N/mm^2\n'.format(si_xx[mymax]))
+        #f.write('si_yy = {0} N/mm^2\n'.format(si_yy[mymax]))
+        #f.write('si_zz = {0} N/mm^2\n'.format(si_zz[mymax]))
+        #f.write('si_xy = {0} N/mm^2\n'.format(si_xy[mymax]))
+        #f.write('si_xz = {0} N/mm^2\n'.format(si_xz[mymax]))
+        #f.write('si_yz = {0} N/mm^2\n'.format(si_yz[mymax]))
+        # save signed vmises spgs
+    with open(RESULTDIR+'sprung_vmises_700','w') as f:
+        numpy.save(f,si_vmises)
+    with open(RESULTDIR+'sprung_principal_700','w') as f:
+        numpy.save(f,si_xx)
+
+elif '07_ermuedung_sprung' in study:
+    with open(RESULTDIR+'07_ermuedung_sprung_350.resu','w') as f:
+        f.write(title('ermüdung sprung 350'))
+        write_si_vmises_max(f,si_vmises.max())
+        write_si_principal_max(f,si_xx.max())
+        write_buckling_ration(f,min_buckling_ratio)
+        uz = DISP['DZ',1]
+        f.write('uz = {0} mm\n'.format(uz))
+    with open(RESULTDIR+'sprung_vmises_350','w') as f:
+        numpy.save(f,si_vmises)
+    with open(RESULTDIR+'sprung_principal_350','w') as f:
+        numpy.save(f,si_xx)
+
+
+FIN();
+
+# vim: set filetype=python ts=4 sw=4 tw=0 :

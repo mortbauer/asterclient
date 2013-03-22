@@ -1,0 +1,313 @@
+# bike-frame.comm is a code-aster command file for the study case of a bike frame
+# Start
+
+from math import *
+from copy import copy
+import sys
+
+sys.path.append('/data/Documents/Studies/9.Semester/317512ProjectLeichtbau/data')
+from parameters import *
+
+def make_pipe(group,r,s):
+    return {'GROUP_MA':group,'SECTION':'CERCLE','CARA':('R','EP'),'VALE':(r,s)}
+
+study = ['01_lenkkopfsteifigkeit']
+bar_parts = []
+beam_parts = ['forklong']
+boundaries = [{'DRY': 0, 'DRX': 0, 'DRZ': 0, 'GROUP_NO': ('p_f_0_l', 'p_f_0_r'), 'DZ': 0, 'DX': 0, 'DY': 0}, {'GROUP_NO': 'p_f_3a', 'DX': 0}]
+liaisons = [{'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DX', 'DDL_2': 'DX', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DY', 'DDL_2': 'DY', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DZ', 'DDL_2': 'DZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DRZ', 'DDL_2': 'DRZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DX', 'DDL_2': 'DX', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DY', 'DDL_2': 'DY', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DZ', 'DDL_2': 'DZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DRZ', 'DDL_2': 'DRZ', 'COEF_MULT_1': 1}]
+liaisons_solide = []
+forces = [{'FX': -100, 'GROUP_NO': 'p_fl_5'}]
+displacement_nodes = ['p_fl_7']
+study_type = params['study_type'] #['linear']
+
+
+
+
+all_parts = copy(beam_parts)
+all_parts.append('frame')
+
+DEBUT(PAR_LOT='OUI');
+
+MAIL = LIRE_MAILLAGE(FORMAT='MED',);
+
+SNAlMg5=DEFI_FONCTION(NOM_PARA='SIGM',VALE=(138, 1e8, 139, 5e4, 150, 1,),
+                       INTERPOL=('LOG','LOG',),);
+
+AlTract = DEFI_FONCTION(NOM_PARA='EPSI',VALE=alu_plasticity,
+            INTERPOL='LIN',PROL_DROITE='LINEAIRE',PROL_GAUCHE='EXCLU',)
+
+StTract = DEFI_FONCTION(NOM_PARA='EPSI',
+        VALE=(1.6e-3,350.0,2e-2,400.0,10e-2,450.0,15e-2,470.0,20e-2,430.0,25e-2,380.0,),
+        INTERPOL='LIN',
+        PROL_DROITE='LINEAIRE',
+        PROL_GAUCHE='EXCLU')
+
+Al = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),);
+Al_fat = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),
+        FATIGUE=_F(MANSON_COFFIN=SNAlMg5,),);
+Al_pla = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),ECRO_LINE=_F(SY=5.0E3,D_SIGM_EPSI=0))
+
+St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
+St37_fat = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),TRACTION=_F(SIGM=StTract));
+St37_pla = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),ECRO_LINE=_F(SY=75.E6,D_SIGM_EPSI=0));
+#if 'linear' in study_type:
+    #Al = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),);
+    #St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
+#elif 'fatigue' in study_type:
+    #St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
+    #Al = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),
+            #FATIGUE=_F(WOHLER=SNAlMg5,),);
+#elif 'plasticity' in study_type:
+    #Al = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),TRACTION=_F(SIGM=AlTract),);
+    #St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
+
+# create model
+md = [{'GROUP_MA':'frame','PHENOMENE':'MECANIQUE','MODELISATION':'POU_D_TG'}]
+md_buck = [{'GROUP_MA':'frame','PHENOMENE':'MECANIQUE','MODELISATION':'POU_D_TG'}]
+
+if len(beam_parts) > 0:
+    md.append({'GROUP_MA':beam_parts,'PHENOMENE':'MECANIQUE','MODELISATION':'POU_D_TG'})
+if len(bar_parts) > 0:
+    md.append({'GROUP_MA':bar_parts,'PHENOMENE':'MECANIQUE','MODELISATION':'BARRE'})
+if len(bar_parts) > 0 or len(beam_parts) >0 :
+    md_buck.append({'GROUP_MA':beam_parts+bar_parts,'PHENOMENE':'MECANIQUE','MODELISATION':'POU_D_TG'})
+
+
+MODE = AFFE_MODELE(MAILLAGE=MAIL, AFFE=md)
+MODEBUCK = AFFE_MODELE(MAILLAGE=MAIL, AFFE=md_buck)
+
+# assigne material
+ma = [{'GROUP_MA':'frame','MATER':Al}]
+
+if len(beam_parts) > 0:
+    ma.append({'GROUP_MA':beam_parts,'MATER':St37})
+if len(bar_parts) > 0:
+    ma.append({'GROUP_MA':bar_parts,'MATER':St37})
+
+MATE = AFFE_MATERIAU(MAILLAGE=MAIL, AFFE=ma)
+
+
+# assigne plasticity material
+ma_pla = [{'GROUP_MA':'frame','MATER':Al_pla}]
+
+if len(beam_parts) > 0:
+    ma_pla.append({'GROUP_MA':beam_parts,'MATER':St37_pla})
+if len(bar_parts) > 0:
+    ma_pla.append({'GROUP_MA':bar_parts,'MATER':St37_pla})
+
+MATE_pla = AFFE_MATERIAU(MAILLAGE=MAIL, AFFE=ma_pla)
+
+# assigne elements
+
+el_poutre = [ make_pipe(x,r,s) for x,r,s in [('top',r_top,s_top),('head',r_head,s_head),
+    ('down',r_down,s_down),('seat',r_seat,s_seat),('bb',r_bb,s_bb),
+    (('sstr','sstl'),r_sstay,s_sstay),(('cstr','cstl'),r_cstay,s_cstay)]]
+
+el_poutre_buck = [ make_pipe(x,r,s) for x,r,s in [('top',r_top,s_top),('head',r_head,s_head),
+    ('down',r_down,s_down),('seat',r_seat,s_seat),('bb',r_bb,s_bb),
+    (('sstr','sstl'),r_sstay,s_sstay),(('cstr','cstl'),r_cstay,s_cstay)]]
+if len(beam_parts) > 0:
+    el_poutre.append(make_pipe(beam_parts,r_head,s_head))
+    el_poutre_buck.append(make_pipe(beam_parts,r_head,s_head))
+
+if len(bar_parts) > 0:
+    el_barre = make_pipe(bar_parts,r_head,s_head)
+    el_poutre_buck.append(make_pipe(bar_parts,r_head,s_head))
+
+if len(bar_parts) == 0:
+    ELEM = AFFE_CARA_ELEM(MODELE=MODE,POUTRE=el_poutre)
+else:
+    ELEM = AFFE_CARA_ELEM(MODELE=MODE,POUTRE=el_poutre,BARRE=el_barre)
+
+ELEMBUCK = AFFE_CARA_ELEM(MODELE=MODEBUCK,POUTRE=el_poutre_buck)
+
+
+#Modulate=DEFI_FONCTION(NOM_PARA='INST',
+                       #PROL_DROITE ='LINEAIRE',
+                       #PROL_GAUCHE='LINEAIRE',
+                       #VALE=(0., 0., 1., 1.,),);
+
+# charges
+ch = {}
+chb = {}
+ch['F_N'] = AFFE_CHAR_MECA(MODELE=MODE, FORCE_NODALE=forces)
+chb['F_N'] = AFFE_CHAR_MECA(MODELE=MODEBUCK, FORCE_NODALE=forces)
+
+ch['B'] = AFFE_CHAR_MECA(MODELE=MODE, DDL_IMPO=boundaries)
+chb['B'] = AFFE_CHAR_MECA(MODELE=MODEBUCK, DDL_IMPO=boundaries)
+
+Modulate=DEFI_FONCTION(NOM_PARA='INST',
+            PROL_DROITE ='LINEAIRE',
+            PROL_GAUCHE='LINEAIRE',
+            VALE=(0., 0.,
+                  1., 1.,
+                  2., 0.,
+                  3., -1.,
+                  4., 0.,),);
+
+if len(liaisons) > 0:
+    ch['L_G'] = AFFE_CHAR_MECA(MODELE=MODE, LIAISON_GROUP=liaisons)
+    chb['L_G'] = AFFE_CHAR_MECA(MODELE=MODEBUCK, LIAISON_GROUP=liaisons)
+
+if len(liaisons_solide) > 0:
+    ch['L_S'] =  AFFE_CHAR_MECA(MODELE=MODE, LIAISON_SOLIDE=liaisons_solide)
+    chb['L_S'] =  AFFE_CHAR_MECA(MODELE=MODEBUCK, LIAISON_SOLIDE=liaisons_solide)
+
+if 'linear' in study_type:
+    RESU = MECA_STATIQUE(MODELE=MODE, CHAM_MATER=MATE, CARA_ELEM=ELEM,
+           EXCIT=[{'CHARGE':x} for x in ch.values()])
+    sigmaxx = 'SIPM_ELNO'
+elif 'fatigue' in study_type:
+
+    Time=DEFI_LIST_REEL(DEBUT=0, INTERVALLE=_F(JUSQU_A=1.0, NOMBRE=5,),);
+    #EXCITE['CHARGE']['FONC_MULT'] = Modulate
+    RESU=MECA_STATIQUE(MODELE=MODE, CHAM_MATER=MATE, CARA_ELEM=ELEM, EXCIT=EXCITE,LIST_INST=Time,);
+    sigmaxx = 'SIPM_ELNO'
+elif 'plasticity' in study_type:
+    TIME=DEFI_LIST_REEL(DEBUT=0.0, INTERVALLE=_F(JUSQU_A=1.0, NOMBRE=5,),);
+    RESU=STAT_NON_LINE(MODELE=MODE, CHAM_MATER=MATE_pla, CARA_ELEM=ELEM,
+           EXCIT=[{'CHARGE':x} for x in ch.values()],
+                      COMP_INCR=_F(RELATION='VMIS_ISOT_LINE',
+                                   TOUT='OUI',),
+                      INCREMENT=_F(LIST_INST=TIME,),
+                      NEWTON=_F(REAC_INCR=1,
+                                MATRICE='TANGENTE',
+                                REAC_ITER=1,),
+                      CONVERGENCE=_F(ITER_GLOB_MAXI=15,),
+                      ARCHIVAGE=_F(PAS_ARCH=1,),);
+    sigmaxx = 'SIGM_ELNO'
+
+
+
+MASS=POST_ELEM(RESULTAT=RESU, MODELE=MODE, MASS_INER=_F(GROUP_MA=('frame',),),
+        TITRE=' frame mass');
+
+RESU = CALC_CHAMP(reuse=RESU,RESULTAT=RESU,
+            CONTRAINTE=(sigmaxx,'SIPO_ELNO','SIPO_NOEU',),
+            );
+
+sign = FORMULE(NOM_PARA=("x"),VALE="copysign(1, x)")
+
+fTrace = FORMULE(NOM_PARA= ("SIXX", "SIYY", "SIZZ"),
+VALE= """ SIXX+SIYY+SIZZ """)
+fVMisSG = FORMULE(NOM_PARA= ("SIXX", "SIYY", "SIZZ", "SIXY","SIYZ","SIXZ"),
+VALE= """ sign(fTrace(SIXX,SIYY,SIZZ))*sqrt (
+3. /2. * (SIXX ** 2 + SIYY ** 2 + SIZZ ** 2
++ 2*SIXY ** 2 + 2*SIXZ ** 2 + 2*SIYZ ** 2)
+- 1. /2. * fTrace (SIXX, SIYY, SIZZ) ** 2
+) """)
+
+RESU2 = CALC_CHAMP(
+    RESULTAT=RESU,
+    CHAM_UTIL=_F(
+        NOM_CHAM='SIPM_ELNO',
+        FORMULE=(fTrace,fVMisSG),
+        NUME_CHAM_RESU=1,
+    ),);
+
+# {{{ improve Results
+IMPR_RESU(UNITE=80, FORMAT='MED', RESU=_F(RESULTAT=RESU,
+        NOM_CHAM=('DEPL',sigmaxx,'SIPO_NOEU',),),);
+
+IMPR_RESU(UNITE=81, FORMAT='GMSH', RESU=_F(RESULTAT=RESU,
+        NOM_CHAM=('DEPL',sigmaxx,'SIPO_NOEU',),),);
+
+IMPR_RESU(UNITE=38, FORMAT='RESULTAT', RESU=(
+    #_F(RESULTAT=RESU, NOM_CHAM=('DEPL',), GROUP_NO=('p_f_3','p_f_4')),
+    _F(RESULTAT=RESU, NOM_CHAM=(sigmaxx,),
+        NOM_CMP=('SIXX','SIYY','SIZZ','SIXY','SIXZ','SIYZ',),
+        VALE_MAX='OUI',  VALE_MIN='OUI',),
+    _F(RESULTAT=RESU, NOM_CHAM=('SIPO_ELNO',), VALE_MAX='OUI',  VALE_MIN='OUI',),
+    ),);
+
+if len(displacement_nodes) > 0:
+    IMPR_RESU(UNITE=38, FORMAT='RESULTAT', RESU=_F(RESULTAT=RESU,
+                    GROUP_NO=displacement_nodes, NOM_CHAM=('DEPL'),),);
+    DISP=CREA_TABLE(RESU=_F(RESULTAT=RESU, GROUP_NO=displacement_nodes,
+                TOUT_CMP='OUI', NOM_CHAM='DEPL',), TITRE='displacement at {0}'.format(displacement_nodes),);
+    IMPR_TABLE(UNITE=39, TABLE=DISP,)
+
+IMPR_TABLE(UNITE=39,TABLE=MASS);
+
+#WELDN=CREA_TABLE(RESU=_F(RESULTAT=RESU,NOM_CHAM=sigmaxx,GROUP_NO='weldn',TOUT_CMP='OUI'),TITRE='vmises stresses, weld nodes')
+#WELDN=CREA_TABLE(RESU=_F(RESULTAT=RESU, GROUP_NO=('weldn',),
+            #TOUT_CMP='OUI'), TITRE='vmises stresses, weld nodes');
+WELDN=POST_RELEVE_T(ACTION=(_F(OPERATION='EXTRACTION',
+                              INTITULE='ForceXYZ',
+                              RESULTAT=RESU,
+                              NOM_CHAM='SIPM_ELNO',
+                              TOUT_ORDRE='OUI',
+                              NOM_CMP='SIXX',
+                              GROUP_NO='weldn',),))
+
+SIGM=CREA_CHAMP(TYPE_CHAM='ELNO_SIEF_R', OPERATION='EXTR', RESULTAT=RESU,NUME_ORDRE=1,NOM_CHAM=sigmaxx,)
+
+VMIS=CREA_CHAMP(TYPE_CHAM='ELNO_NEUT_R', OPERATION='EXTR', RESULTAT=RESU2,NUME_ORDRE=1, NOM_CHAM='UT01_ELNO',);
+
+IMPR_RESU(UNITE=38,FORMAT='RESULTAT',
+         RESU=(_F(RESULTAT=RESU2,
+                 NOM_CHAM='UT01_ELNO',NOM_CMP='X1',
+                 VALE_MAX='OUI',SOUS_TITRE='trace max'),
+               _F(RESULTAT=RESU2,
+                 NOM_CHAM='UT01_ELNO',NOM_CMP='X2',
+                 VALE_MAX='OUI',SOUS_TITRE='vmis_sg max'),),);
+
+# For displaying of local coordinate system, available from 11.2.17 onwards
+#IMPR_RESU(UNITE=80,FORMAT='MED', CONCEPT=_F(CARA_ELEM=ELEM,  REPERE_LOCAL='OUI', MODELE=MODE,),);
+
+# }}} Improve Results
+
+# {{{ buckling
+#if 'fatigue' not in study_type and len(bar_parts) == 0 and 'plasticity' not in study_type:
+Smech = CALC_MATR_ELEM(OPTION='RIGI_MECA',MODELE=MODEBUCK,CHARGE=[ x for x in chb.values()],
+        CARA_ELEM=ELEMBUCK,CHAM_MATER=MATE);
+
+RESUBUCK = MECA_STATIQUE(MODELE=MODEBUCK, CHAM_MATER=MATE, CARA_ELEM=ELEMBUCK,
+        EXCIT=[{'CHARGE':x} for x in chb.values()])
+Fsigma = CREA_CHAMP(OPERATION='EXTR',TYPE_CHAM='ELGA_SIEF_R',
+        RESULTAT=RESUBUCK,NUME_ORDRE=1,NOM_CHAM='SIEF_ELGA')
+Sgeom = CALC_MATR_ELEM(OPTION='RIGI_GEOM',MODELE=MODEBUCK,SIEF_ELGA=Fsigma,
+        CARA_ELEM=ELEMBUCK);
+
+nddl   = NUME_DDL(MATR_RIGI=Smech);
+SAmech = ASSE_MATRICE(NUME_DDL=nddl,MATR_ELEM=Smech,);
+SAgeom = ASSE_MATRICE(NUME_DDL=nddl,MATR_ELEM=Sgeom,);
+
+buckle = MODE_ITER_SIMULT(INFO=1,
+                        MATR_A = SAmech,
+                        MATR_B = SAgeom,
+                        METHODE = 'SORENSEN',
+                        PREC_SOREN=2e-16,
+                        NMAX_ITER_SOREN=50,
+                        TYPE_RESU= 'MODE_FLAMB',
+                        CALC_FREQ = _F(OPTION = 'PLUS_PETITE',NMAX_FREQ=10,),);
+
+IMPR_RESU(FORMAT='MED',
+        UNITE=82,
+        RESU=_F(MAILLAGE=MAIL,
+                RESULTAT=buckle,
+                NOM_CHAM='DEPL',),);
+
+crit_bu = RECU_TABLE(CO=buckle,NOM_PARA='CHAR_CRIT')
+
+IMPR_TABLE(UNITE=37,TABLE=crit_bu);
+
+# }}} buckle
+
+# {{{ fatigue
+if 'fatigue' in study_type:
+    RESU = CALC_CHAMP(reuse=RESU,RESULTAT=RESU,
+            CRITERES=('SIEQ_ELGA',),
+            );
+
+    CALC_FATIGUE(TYPE_CALCUL='CUMUL_DOMMAGE',
+            OPTION='DOMA_ELGA_EPSI',
+            HISTOIRE=_F(RESULTAT=RESU,EQUI_GD='INVA_2_SG',),
+            DOMMAGE='TAHERI_MANSON',
+            MATER=Al_fat,);
+
+# }}} fatigue
+FIN();
+
+# vim: set fdm=marker filetype=python ts=4 sw=4 tw=0 :

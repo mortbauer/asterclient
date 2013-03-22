@@ -1,0 +1,17 @@
+project: "projectname"
+# source directory for all files if relative path
+srcdir: "source/directory"
+# output directory for all stuff
+outdir: "output/directory"
+# input mesh file
+meshfile: "meshfile.med"
+# define the studies
+calculations:
+  - name: "main"
+    commandfile: "main.comm"
+  - name: "post"
+    commandfile: "post.comm"
+    poursuite: "main"
+# a distribution file should be used
+distributionfile: "distributionfile.distr"
+
