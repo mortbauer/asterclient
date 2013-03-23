@@ -19,7 +19,7 @@ liaisons = [{'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COE
 liaisons_solide = []
 forces = [{'FX': -100, 'GROUP_NO': 'p_fl_5'}]
 displacement_nodes = ['p_fl_7']
-study_type = params['study_type'] #['linear']
+study_type = 'linear' # params['study_type'] #['linear']
 
 
 
@@ -305,9 +305,9 @@ if 'fatigue' in study_type:
             OPTION='DOMA_ELGA_EPSI',
             HISTOIRE=_F(RESULTAT=RESU,EQUI_GD='INVA_2_SG',),
             DOMMAGE='TAHERI_MANSON',
-            MATER=Al_fat,);
+            MATER=Al_fat)
 
 # }}} fatigue
-FIN();
+FIN()
 
 # vim: set fdm=marker filetype=python ts=4 sw=4 tw=0 :

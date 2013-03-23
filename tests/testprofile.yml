@@ -1,7 +1,7 @@
 # source directory for all files if relative path
 srcdir: "."
 # output directory for all stuff
-outdir: "/home/martin/testdir/asterclient"
+outdir: "results"
 # input mesh file
 meshfile: "mesh.med"
 # define the studies
