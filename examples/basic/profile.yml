@@ -15,18 +15,12 @@ calculations:
       - bikeframe.table: 39
       - bikeframe.resu: 38
       - buckling.resu: 37
-      - vmises.table: 40
   - name: "post"
     commandfile: "post.comm"
     poursuite: "main"
     resultfiles:
-      - bikeframe.rmed: 80
-      - bikeframe.msh: 81
-      - buckling.rmed: 82
-      - bikeframe.table: 39
-      - bikeframe.resu: 38
-      - buckling.resu: 37
       - vmises.table: 40
+      - protocol: "*.rst"
 
 # define different parameter sets for studies
-distributionfile: "bikeframe.distr"
+distributionfile: "distribution.py"

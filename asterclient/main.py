@@ -1,11 +1,10 @@
 import os
-import re
 import sys
 import zipfile
 import shutil
-import ipdb
 import yaml
 import time
+import glob
 import imp
 import atexit
 import tempfile
@@ -13,24 +12,10 @@ import argparse
 import pkgutil
 import subprocess
 import threading
+import termcolor
+import signal
 import multiprocessing
-
-
-ERROR = re.compile('Exception')
-
-class Tee(object):
-    def __init__(self, name, mode):
-        self.file = open(name, mode)
-        self.stdout = sys.stdout
-        sys.stdout = self
-    def __del__(self):
-        sys.stdout = self.stdout
-        self.file.close()
-    def close(self):
-        self.__del__()
-    def write(self, data):
-        self.file.write(data)
-        self.stdout.write(data)
+import logging
 
 def abspath(path,basepath=None):
     if os.path.isabs(path):
@@ -39,7 +24,6 @@ def abspath(path,basepath=None):
         return os.path.abspath(os.path.join(basepath,path))
     else:
         return os.path.abspath(path)
-
 
 def make_pasrer():
     parser = argparse.ArgumentParser()
@@ -112,9 +96,9 @@ def info_calculations(profilename,profile):
     for i in range(len(profile['calculations'])):
         print('\t{0}: {1}\n'.format(i,profile['calculations'][i]['name']))
 
-
 def runstudy(calculations,builddir,studyname,studynumber,
-        profile,outdir,distributionfile,srcdir,options,foreground=False):
+        profile,outdir,distributionfile,srcdir,options,
+        foreground=False):
     for calculation in calculations:
         buildpath = os.path.join(builddir,studyname,calculation['name'])
         try:
@@ -122,7 +106,7 @@ def runstudy(calculations,builddir,studyname,studynumber,
         except:
             if options.force:
                 for x in os.listdir(buildpath):
-                    os.remove(x)
+                    os.remove(os.path.join(buildpath,x))
 
         # copy the elements
         shutil.copyfile(abspath(profile['elements'],basepath=srcdir),
@@ -170,8 +154,13 @@ def runstudy(calculations,builddir,studyname,studynumber,
         if 'resultfiles' in calculation:
             for file_ in calculation['resultfiles']:
                 for key in file_:
-                    with open(os.path.join(buildpath,'fort.%s' % file_[key]),'w') as f:
-                        resultfiles.append(('fort.%s' % file_[key],key))
+                    # result files for acces through fortran
+                    if type(file_[key]) == int:
+                        with open(os.path.join(buildpath,'fort.%s' % file_[key]),'w') as f:
+                            resultfiles.append(('fort.%s' % file_[key],key))
+                    else:
+                        resultfiles.append(('{0}{1}'.format(key,file_[key]),key))
+
         # create command
         arguments = ['supervisor',
                 '--bibpyt', profile['bibpyt'],
@@ -199,25 +188,48 @@ def runstudy(calculations,builddir,studyname,studynumber,
                     'from Execution.E_SUPERV import SUPERV',
                     'from Execution.E_Core import getargs',
                     'supervisor=SUPERV()',
-                    'from distr import parameters;params={{\'params\':parameters[{0}][1]}}'
-                    .format(studynumber) if distributionfile else 'params={}',
-                    'res=supervisor.main(coreopts=getargs({0}),params=params);sys.exit(res)'.format(arguments)]
-            protocol = open(os.path.join(buildpath,'fort.6'),'w')
-            if foreground:
-                res = subprocess.call([profile['aster'],'-c',';'.join(c)])
+                    'from distr import parameters']
+            if not distributionfile:
+                c.append('parqams = {}')
             else:
+                c.append('params={{\'params\':parameters[{0}][1]}};params[\'params\'][\'name\']=parameters[{0}][0]'
+                .format(studynumber))
+
+            c.append('res=supervisor.main(coreopts=getargs({0}),params=params);sys.exit(res)'.format(arguments))
+            if foreground:
+                tee = '| tee {0}; exit $PIPESTATUS'.format(os.path.join(buildpath,'fort.6'))
+                bashscript = profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
+                #res = subprocess.call([profile['aster'],'-c',';'.join(c)])
+                #res = subprocess.call([profile['aster'],'-c',';'.join(c),tee])
+                res = subprocess.call(['bash','-c',bashscript])
+            else:
+                protocol = open(os.path.join(builddir,studyname,'progress.txt'),'a')
                 res = subprocess.call([profile['aster'],'-c',';'.join(c)],stdout=protocol)
-            protocol.close()
-            protocol = open(protocol.name,'r')
-            protocol_content = protocol.read()
-            protocol.close()
-            print >> sys.stdout, ('code aster run {1}:{2} ended: {0}'.
-                    format('OK' if not res else 'with Errors',
+                protocol.close()
+                shutil.copyfile(os.path.join(builddir,studyname,protocol.name),os.path.join(buildpath,'fort.6'))
+            print >> sys.stdout, ('code aster run "{1}:{2}" ended: {0}'.
+                    format(termcolor.colored('OK',color='green') if not res else ('with' +
+                        termcolor.colored('Errors',color='red')),
                         studyname,calculation['name']))
             try:
                 # copy the results
                 for x in resultfiles:
-                    shutil.copyfile(os.path.join(buildpath,x[0]),os.path.join(outputpath,x[1]))
+                    # everything else, with globbing
+                    allres = glob.glob(x[0])
+                    if len(allres) == 1:
+                        if os.path.getsize(allres[0]) == 0:
+                                logging.warn('result file "{0}" is empty'.format(x[1]))
+                        else:
+                            shutil.copyfile(os.path.join(buildpath,allres[0]),os.path.join(outputpath,x[1]))
+                    elif len(allres) > 1:
+                        for f in allres:
+                            if os.path.getsize(f) == 0:
+                                logging.warn('result file "{0}" is empty'.format(f))
+                            else:
+                                shutil.copyfile(os.path.join(buildpath,f),os.path.join(outputpath,'{0}_{1}'.format(x[1],f)))
+                    else:
+                        logging.warn('no files found for "{0}"'.format(x[0]))
+
                 # copy the standard result files
                 shutil.copyfile(os.path.join(buildpath,'fort.6'),os.path.join(outputpath,calculation['name']+'.mess'))
                 # copy the commandfile as well as the parameters and the mesh
@@ -242,15 +254,34 @@ def runstudy(calculations,builddir,studyname,studynumber,
             os.chdir(curdir)
         # copy the results
 
-
 def main(argv=None):
+    processes = []
+    def shutdown(signum,frame):
+        stderr = sys.stderr
+        stdout = sys.stdout
+        sys.stderr = os.devnull
+        sys.stdout = os.devnull
+        for pname,p in processes:
+            if p.is_alive():
+                p.terminate()
+        sys.stderr = stderr
+        sys.stdout = stdout
+        print >> sys.stdout, ('killed all calculations trough user')
+
+    signal.signal(signal.SIGINT,shutdown)
+
     if not argv:
         argv = sys.argv[1:]
     parser = make_pasrer()
     options = parser.parse_args(argv)
     # get default profile
-    profile = yaml.load(pkgutil.get_data(__name__,
-            os.path.join('data','defaults.yml')))
+    try:
+        profile = yaml.load(pkgutil.get_data(__name__,
+                os.path.join('data','defaults.yml')))
+    except:
+        print >> sys.stderr, ('an error occured, make sure the'
+        ' ASTER_ROOT environment variable is set')
+        sys.exit(1)
     # read profile
     try:
         profile.update(yaml.load(options.profile.read()))
@@ -259,53 +290,6 @@ def main(argv=None):
         ' "{0}:\n\n {1}\n please check your profile if it is valid yaml,'.
         format(options.profile.name,e))
         sys.exit(1)
-    # update profile with options from commandline
-    if options.workdir:
-        profile['workdir'] = options.workdir
-    # populate the commandline options into the profile
-    for key in ['bibpyt','memjeveux','memory','tpmax','max_base',
-            'dbgjeveux','mode','interact','rep_outils','rep_mat',
-            'rep_dex','suivi_batch','verif']:
-        if getattr(options,key) != None:
-            profile[key] = getattr(options,key)
-    # check the profile file
-    # check if all minimum needed keys are available
-    def checkkeyinprofile(profile,key):
-        if not key in profile:
-            print >> sys.stderr, ('"{0}" is missing in '
-            'your profile file'.format(key))
-            sys.exit(1)
-
-
-    checkkeyinprofile(profile,'meshfile')
-    checkkeyinprofile(profile,'calculations')
-    def check_min_keys(dict_):
-        if not 'name' in calc or not calc['name']:
-            print >> sys.stderr, ('you need to specify a'
-            ' name for every calculation')
-            return False
-        if not 'commandfile' in calc or not calc['commandfile']:
-            print >> sys.stderr, ('you need to specify a'
-            ' commandfile for every calculation')
-            return False
-        return True
-    for calc in profile['calculations']:
-        if not check_min_keys(calc):
-            sys.exit(1)
-    # check if all keys have values
-    def check_values(dict_):
-        for key in dict_:
-            if type(dict_[key]) == dict:
-                check_values(dict_[key])
-            # test if value is empty, the following list is allowed to be empty
-            elif dict_[key] == None and key not in ['memory','max_base']:
-                print >> sys.stderr, ('"{0}" is not valid for'
-                ' "{1}" in your profile'.format(dict_[key],key))
-                return False
-        return True
-    if not check_values(profile):
-        sys.exit(1)
-
     # import distribution file if given
     if 'distributionfile' in profile:
         if not os.path.isabs(profile['distributionfile']):
@@ -329,6 +313,53 @@ def main(argv=None):
                 info_studies(studies)
             info_calculations(options.profile.name,profile)
     elif options.action == 'run':
+    # update profile with options from commandline
+        if options.workdir:
+            profile['workdir'] = options.workdir
+        # populate the commandline options into the profile
+        for key in ['bibpyt','memjeveux','memory','tpmax','max_base',
+                'dbgjeveux','mode','interact','rep_outils','rep_mat',
+                'rep_dex','suivi_batch','verif']:
+            if getattr(options,key) != None:
+                profile[key] = getattr(options,key)
+        # check the profile file
+        # check if all minimum needed keys are available
+        def checkkeyinprofile(profile,key):
+            if not key in profile:
+                print >> sys.stderr, ('"{0}" is missing in '
+                'your profile file'.format(key))
+                sys.exit(1)
+
+        checkkeyinprofile(profile,'meshfile')
+        checkkeyinprofile(profile,'calculations')
+        def check_min_keys(dict_):
+            if not 'name' in calc or not calc['name']:
+                print >> sys.stderr, ('you need to specify a'
+                ' name for every calculation')
+                return False
+            if not 'commandfile' in calc or not calc['commandfile']:
+                print >> sys.stderr, ('you need to specify a'
+                ' commandfile for every calculation')
+                return False
+            return True
+        for calc in profile['calculations']:
+            if not check_min_keys(calc):
+                sys.exit(1)
+        # check if all keys have values
+        def check_values(dict_):
+            for key in dict_:
+                if type(dict_[key]) == dict:
+                    check_values(dict_[key])
+                # test if value is empty, the following list is allowed to be empty
+                elif dict_[key] == None and key not in ['memory','max_base']:
+                    print >> sys.stderr, ('"{0}" is not valid for'
+                    ' "{1}" in your profile'.format(dict_[key],key))
+                    return False
+            return True
+        if not check_values(profile):
+            sys.exit(1)
+
+
         # get the calculations which should be run
         calculations = []
         if options.calculation:
@@ -383,15 +414,15 @@ def main(argv=None):
                     sys.exit(1)
                 else:
                     # if force option clean up directory
-                    shutil.rmtree(builddir)
-                    os.makedirs(builddir)
+                    pass
+
 
         # run the shit
         sys.path.append(profile['bibpyt'])
         from Execution.E_SUPERV import SUPERV
         from Execution.E_Core import getargs
         supervisor = SUPERV()
-        processes = []
+
         if options.sequential:
             for studynumber,study in studies_to_run:
                 runstudy(**{'calculations':calculations,
@@ -402,23 +433,23 @@ def main(argv=None):
 
         else:
             for studynumber,study in studies_to_run:
-                processes.append(multiprocessing.Process(target=runstudy,
+                processes.append((study[0],multiprocessing.Process(target=runstudy,
                     kwargs={'calculations':calculations,
                     'builddir':builddir,'studyname':study[0],'studynumber':studynumber,
                     'profile':profile,'outdir':outdir,'srcdir':srcdir,
                     'distributionfile':distributionfile,
-                    'options':options}))
+                    'options':options})))
             # start the process stepped
-            c = 0
+            counter = 0
             ncpus = multiprocessing.cpu_count()
             for i in range(len(processes)):
-                processes[i].start()
-                c += 1
-                if c == ncpus:
-                    time.sleep(1)
-                    for j in range(ncpus):
-                        processes[j].join()
-                c = 0
+                processes[i][1].start()
+                counter += 1
+                if counter == ncpus or len(processes) < ncpus:
+                    time.sleep(0.1)
+                    for j in range(min(len(processes),ncpus)):
+                        processes[j][1].join()
+                    counter = 0
 
 if '__main__' == __name__:
     main()
