@@ -42,7 +42,7 @@ into the examples :file:`examples/basic/` directory you just need to type::
 
 Basic Example
 =============
-For a full basic example see the examples directory `example <../../../examples>`_
+For a full basic example see the examples directory `example <https://github.com/mortbauer/asterclient/tree/master/examples>`_
 
 
 Detailed Documentation
