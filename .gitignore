@@ -1,1 +1,3 @@
 *.pyc
+asterclient.egg-info/*
+examples/basic/results/*
