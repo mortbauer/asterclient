@@ -1,3 +1,4 @@
 *.pyc
+doc/_build/*
 asterclient.egg-info/*
 examples/basic/results/*

@@ -5,21 +5,20 @@ from math import *
 from copy import copy
 import sys
 
-sys.path.append('/data/Documents/Studies/9.Semester/317512ProjectLeichtbau/data')
 from parameters import *
 
 def make_pipe(group,r,s):
     return {'GROUP_MA':group,'SECTION':'CERCLE','CARA':('R','EP'),'VALE':(r,s)}
 
-study = ['01_lenkkopfsteifigkeit']
-bar_parts = []
-beam_parts = ['forklong']
-boundaries = [{'DRY': 0, 'DRX': 0, 'DRZ': 0, 'GROUP_NO': ('p_f_0_l', 'p_f_0_r'), 'DZ': 0, 'DX': 0, 'DY': 0}, {'GROUP_NO': 'p_f_3a', 'DX': 0}]
-liaisons = [{'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DX', 'DDL_2': 'DX', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DY', 'DDL_2': 'DY', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DZ', 'DDL_2': 'DZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_3', 'GROUP_NO_1': 'p_f_3', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DRZ', 'DDL_2': 'DRZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DX', 'DDL_2': 'DX', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DY', 'DDL_2': 'DY', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DZ', 'DDL_2': 'DZ', 'COEF_MULT_1': 1}, {'GROUP_NO_2': 'p_fl_4', 'GROUP_NO_1': 'p_f_4', 'COEF_IMPO': 0, 'COEF_MULT_2': -1, 'DDL_1': 'DRZ', 'DDL_2': 'DRZ', 'COEF_MULT_1': 1}]
-liaisons_solide = []
-forces = [{'FX': -100, 'GROUP_NO': 'p_fl_5'}]
-displacement_nodes = ['p_fl_7']
-study_type = 'linear' # params['study_type'] #['linear']
+study = params['name']
+bar_parts = params['bar_parts']
+beam_parts = params['beam_parts']
+boundaries = params['boundaries']
+liaisons = params['liaisons']
+liaisons_solide = params['liaisons_solide']
+forces = params['forces']
+displacement_nodes = params['displacement_nodes']
+study_type = params['study_type']
 
 
 
@@ -51,16 +50,6 @@ Al_pla = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),ECRO_LINE=_F(SY
 St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
 St37_fat = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),TRACTION=_F(SIGM=StTract));
 St37_pla = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),ECRO_LINE=_F(SY=75.E6,D_SIGM_EPSI=0));
-#if 'linear' in study_type:
-    #Al = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),);
-    #St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
-#elif 'fatigue' in study_type:
-    #St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
-    #Al = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),
-            #FATIGUE=_F(WOHLER=SNAlMg5,),);
-#elif 'plasticity' in study_type:
-    #Al = DEFI_MATERIAU(ELAS=_F(E=alu_E, NU=alu_NU, RHO=alu_RHO,),TRACTION=_F(SIGM=AlTract),);
-    #St37 = DEFI_MATERIAU(ELAS=_F(E=210000., NU=0.3, RHO=7.85e-6,),);
 
 # create model
 md = [{'GROUP_MA':'frame','PHENOMENE':'MECANIQUE','MODELISATION':'POU_D_TG'}]
@@ -122,11 +111,6 @@ else:
 
 ELEMBUCK = AFFE_CARA_ELEM(MODELE=MODEBUCK,POUTRE=el_poutre_buck)
 
-
-#Modulate=DEFI_FONCTION(NOM_PARA='INST',
-                       #PROL_DROITE ='LINEAIRE',
-                       #PROL_GAUCHE='LINEAIRE',
-                       #VALE=(0., 0., 1., 1.,),);
 
 # charges
 ch = {}
@@ -230,9 +214,6 @@ if len(displacement_nodes) > 0:
 
 IMPR_TABLE(UNITE=39,TABLE=MASS);
 
-#WELDN=CREA_TABLE(RESU=_F(RESULTAT=RESU,NOM_CHAM=sigmaxx,GROUP_NO='weldn',TOUT_CMP='OUI'),TITRE='vmises stresses, weld nodes')
-#WELDN=CREA_TABLE(RESU=_F(RESULTAT=RESU, GROUP_NO=('weldn',),
-            #TOUT_CMP='OUI'), TITRE='vmises stresses, weld nodes');
 WELDN=POST_RELEVE_T(ACTION=(_F(OPERATION='EXTRACTION',
                               INTITULE='ForceXYZ',
                               RESULTAT=RESU,
@@ -296,7 +277,7 @@ IMPR_TABLE(UNITE=37,TABLE=crit_bu);
 # }}} buckle
 
 # {{{ fatigue
-if 'fatigue' in study_type:
+if 'fatigue' == study_type:
     RESU = CALC_CHAMP(reuse=RESU,RESULTAT=RESU,
             CRITERES=('SIEQ_ELGA',),
             );

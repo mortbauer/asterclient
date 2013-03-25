@@ -161,6 +161,15 @@ def runstudy(calculations,builddir,studyname,studynumber,
                     else:
                         resultfiles.append(('{0}{1}'.format(key,file_[key]),key))
 
+        # copy additional inputfiles
+        if 'inputfiles' in calculation:
+            for file_ in calculation['inputfiles']:
+                try:
+                    shutil.copyfile(os.path.join(srcdir,file_),os.path.join(buildpath,file_))
+                except:
+                    logging.exception('failed to copy input file "{0}"'.format(file_))
+                    raise
+
         # create command
         arguments = ['supervisor',
                 '--bibpyt', profile['bibpyt'],
