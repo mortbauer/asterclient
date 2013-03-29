@@ -16,6 +16,10 @@ import termcolor
 import signal
 import multiprocessing
 import logging
+import random
+import string
+#import ipdb
+#import debug
 
 def abspath(path,basepath=None):
     if os.path.isabs(path):
@@ -72,7 +76,7 @@ def make_pasrer():
         help="directory of materials properties")
     runparser.add_argument('--rep_dex',
         help="directory of external datas (geometrical datas or properties...)")
-    runparser.add_argument('--suivi_batch',
+    runparser.add_argument('--suivi_batch',action='store_true',default=True,
         help="force to flush of the output after each line")
     runparser.add_argument('--verif', action='store_true', default=False,
         help="only check the syntax of the command file is done")
@@ -83,8 +87,10 @@ def info_studies(parameters,studyname=None):
     of the given profile file"""
     if not studyname:
         print('\navailable parametric studies:\n')
-        for i in range(len(parameters)):
-            print('\t{0}: {1}\n'.format(i,parameters[i][0]))
+        i = 0
+        for key in parameters:
+            print('\t{0}: {1}\n'.format(i,key['name']))
+            i +=1
     else:
         print('\nparameters of study {0}:\n'.format(studyname))
         print(parameters[x][1] for x in parameters if parameters[x] == studyname)
@@ -100,7 +106,10 @@ def runstudy(calculations,builddir,studyname,studynumber,
         profile,outdir,distributionfile,srcdir,options,
         foreground=False):
     for calculation in calculations:
-        buildpath = os.path.join(builddir,studyname,calculation['name'])
+        buildpath = os.path.join(builddir,
+                profile.get('project',''.join(random.choice(
+                    string.ascii_uppercase + string.digits)
+                    for x in range(5))),studyname,calculation['name'])
         try:
             os.makedirs(buildpath)
         except:
@@ -135,7 +144,7 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 os.path.join(buildpath,'fort.1'))
         # copy distributionfile to the buildpath
         if distributionfile:
-            shutil.copyfile(abspath(profile['distributionfile'],basepath=srcdir),
+            shutil.copyfile(abspath(profile['distributionfile']+'.py',basepath=srcdir),
                     os.path.join(buildpath,'distr.py'))
         # if calculation is a continued one copy the results from the
         # previous step
@@ -165,7 +174,8 @@ def runstudy(calculations,builddir,studyname,studynumber,
         if 'inputfiles' in calculation:
             for file_ in calculation['inputfiles']:
                 try:
-                    shutil.copyfile(os.path.join(srcdir,file_),os.path.join(buildpath,file_))
+                    addsource = os.path.join(srcdir,file_)
+                    shutil.copyfile(addsource,os.path.join(buildpath,os.path.split(file_)[-1]))
                 except:
                     logging.exception('failed to copy input file "{0}"'.format(file_))
                     raise
@@ -177,6 +187,7 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 '--mode',profile['mode'],
                 '--rep_outils',profile['rep_outils'],
                 '--rep_mat',profile['rep_mat'],
+                '--rep_dex',profile['rep_dex'],
                 '--bibpyt',profile['bibpyt'],
                 '--tpmax',str(profile['tpmax']),
                 '--memjeveux',str(profile['memjeveux'])]
@@ -189,11 +200,13 @@ def runstudy(calculations,builddir,studyname,studynumber,
         try:
             curdir = os.curdir
             os.chdir(buildpath)
+            ## add the workingdir to the LD_LIBRARY_PATH
+            os.environ['LD_LIBRARY_PATH'] = os.pathsep + buildpath + os.environ['LD_LIBRARY_PATH']
             # execute the shit of it
             #ier = supervisor.main(coreopts=getargs(arguments),params={'params':study[1]})
             # unfortunately POURSUITE only works in a new process,
             # therefore let us call everything in a knew process
-            c = ['import sys','sys.path.append(\'{0}\')'.format(profile['bibpyt']),
+            c = ['import sys','sys.path.insert(0,\'{0}\')'.format(profile['bibpyt']),
                     'from Execution.E_SUPERV import SUPERV',
                     'from Execution.E_Core import getargs',
                     'supervisor=SUPERV()',
@@ -201,23 +214,25 @@ def runstudy(calculations,builddir,studyname,studynumber,
             if not distributionfile:
                 c.append('parqams = {}')
             else:
-                c.append('params={{\'params\':parameters[{0}][1]}};params[\'params\'][\'name\']=parameters[{0}][0]'
+                c.append('params={{\'params\':parameters[{0}]}};params[\'params\'][\'studynumber\']={0}'
                 .format(studynumber))
 
+            print(arguments)
             c.append('res=supervisor.main(coreopts=getargs({0}),params=params);sys.exit(res)'.format(arguments))
             if foreground:
                 tee = '| tee {0}; exit $PIPESTATUS'.format(os.path.join(buildpath,'fort.6'))
                 bashscript = profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
+                #bashscript = 'source /data/devel/python/aster/bin/set_env\n' + profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
                 #res = subprocess.call([profile['aster'],'-c',';'.join(c)])
                 #res = subprocess.call([profile['aster'],'-c',';'.join(c),tee])
                 res = subprocess.call(['bash','-c',bashscript])
             else:
-                protocol = open(os.path.join(builddir,studyname,'progress.txt'),'a')
+                protocol = open(os.path.join(os.path.split(buildpath)[0],'progress.txt'),'a')
                 res = subprocess.call([profile['aster'],'-c',';'.join(c)],stdout=protocol)
                 protocol.close()
                 shutil.copyfile(os.path.join(builddir,studyname,protocol.name),os.path.join(buildpath,'fort.6'))
             print >> sys.stdout, ('code aster run "{1}:{2}" ended: {0}'.
-                    format(termcolor.colored('OK',color='green') if not res else ('with' +
+                    format(termcolor.colored('OK',color='green') if not res else ('with ' +
                         termcolor.colored('Errors',color='red')),
                         studyname,calculation['name']))
             try:
@@ -245,7 +260,7 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 shutil.copyfile(os.path.join(buildpath,'fort.1'),os.path.join(outputpath,calculation['commandfile']))
                 shutil.copyfile(os.path.join(buildpath,'fort.20'),os.path.join(outputpath,profile['meshfile']))
                 if distributionfile:
-                    shutil.copyfile(distributionfile,os.path.join(outputpath,profile['distributionfile']))
+                    shutil.copyfile(os.path.join(buildpath,'distr.py'),os.path.join(outputpath,profile['distributionfile']+'.py'))
                 # copy the zipped base
                 zipf = zipfile.ZipFile(os.path.join(outputpath,'glob.1.zip'),'w')
                 zipf.write('glob.1')
@@ -257,6 +272,8 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 # only raise if run was succesful
                 if not res:
                     raise
+                else:
+                    logging.exception('ignore exception, since code aster run ended with an error')
         except:
             raise
         finally:
@@ -299,12 +316,21 @@ def main(argv=None):
         ' "{0}:\n\n {1}\n please check your profile if it is valid yaml,'.
         format(options.profile.name,e))
         sys.exit(1)
+    # make paths absolute
+    for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
+        if not os.path.isabs(profile[pathkey]):
+            profile[pathkey] = os.path.join(profile['aster_root'],profile['version'],profile[pathkey])
+    if not os.path.isabs(profile['rep_outils']):
+        profile['rep_outils'] = os.path.join(profile['aster_root'],profile['rep_outils'])
     # import distribution file if given
     if 'distributionfile' in profile:
         if not os.path.isabs(profile['distributionfile']):
             distributionfile = abspath(profile['distributionfile'],basepath=profile['srcdir'])
         try:
-            studies = imp.load_source(*os.path.split(distributionfile)).parameters
+            sys.path.append(os.path.split(distributionfile)[0])
+            studies = __import__(os.path.split(distributionfile)[1]).parameters
+            sys.path.remove(os.path.split(distributionfile)[0])
+            #studies = imp.load_source(*os.path.split(distributionfile)).parameters
         except:
             print >> sys.stderr, 'couldn\'t import the distributionfile, the traceback:'
             raise
@@ -388,7 +414,7 @@ def main(argv=None):
         # get the studies which should be run
         studies_to_run = []
         if options.study:
-            studynames = [i[0] for i in studies]
+            studynames = [i['name'] for i in studies]
             for x in options.study:
                 try:
                     studies_to_run.append((int(x),studies[int(x)]))
@@ -428,6 +454,14 @@ def main(argv=None):
 
         # run the shit
         sys.path.append(profile['bibpyt'])
+        # symlink cata to Cata/cata
+        try:
+            os.symlink(os.path.join(profile['cata'],'cata.py'),os.path.join(profile['bibpyt'],'Cata','cata.py'))
+        except OSError as e:
+            if e.errno == os.errno.EEXIST:
+                os.remove(os.path.join(profile['bibpyt'],'Cata','cata.py'))
+                os.symlink(os.path.join(profile['cata'],'cata.py'),os.path.join(profile['bibpyt'],'Cata','cata.py'))
+
         from Execution.E_SUPERV import SUPERV
         from Execution.E_Core import getargs
         supervisor = SUPERV()
@@ -435,16 +469,16 @@ def main(argv=None):
         if options.sequential:
             for studynumber,study in studies_to_run:
                 runstudy(**{'calculations':calculations,
-                        'builddir':builddir,'studyname':study[0],'studynumber':studynumber,
+                        'builddir':builddir,'studyname':study['name'],'studynumber':studynumber,
                         'profile':profile,'outdir':outdir,'srcdir':srcdir,
                         'distributionfile':distributionfile,
                         'options':options,'foreground':True})
 
         else:
             for studynumber,study in studies_to_run:
-                processes.append((study[0],multiprocessing.Process(target=runstudy,
+                processes.append((study,multiprocessing.Process(target=runstudy,
                     kwargs={'calculations':calculations,
-                    'builddir':builddir,'studyname':study[0],'studynumber':studynumber,
+                    'builddir':builddir,'studyname':study['name'],'studynumber':studynumber,
                     'profile':profile,'outdir':outdir,'srcdir':srcdir,
                     'distributionfile':distributionfile,
                     'options':options})))

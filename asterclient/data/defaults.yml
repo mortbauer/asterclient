@@ -16,19 +16,19 @@
 version: &version "STA11.2"
 aster_root: &aster_root !!python/object/apply:os.getenv ["ASTER_ROOT"]
 # path to asteru
-aster: !!python/object/apply:os.path.join [*aster_root,*version,"asteru"]
+aster: "asteru"
 # path of the bibpyt directory
-bibpyt: !!python/object/apply:os.path.join [*aster_root,*version,"bibpyt"]
+bibpyt: "bibpyt"
 # path to the directory cata.py is located, well not used for now, link it into Cata
-cata: !!python/object/apply:os.path.join [*aster_root,*version,"commande"]
+cata: "commande"
 # path to the elements
-elements: !!python/object/apply:os.path.join [*aster_root,*version,"elements"]
+elements: "elements"
 # path to the Code Aster tools
-rep_outils: !!python/object/apply:os.path.join [*aster_root,"outils"]
+rep_outils: "outils"
 # path to the material properties
-rep_mat: !!python/object/apply:os.path.join [*aster_root,*version,"materiau"]
+rep_mat: "materiau"
 # directory of external datas (geometrical datas or properties...)
-rep_dex: !!python/object/apply:os.path.join [*aster_root,*version,""]
+rep_dex: "datg"
 # maximum size of the memory taken by the execution (in MB)
 memory: 
 # limit of the time of the execution (in seconds)

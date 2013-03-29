@@ -1,3 +1,5 @@
+project: "bikeframe-test"
+version: "testing"
 # source directory for all files if relative path
 srcdir: "."
 # output directory for all stuff
@@ -26,4 +28,4 @@ calculations:
       - protocol: "*.rst"
 
 # define different parameter sets for studies
-distributionfile: "distribution.py"
+distributionfile: "distribution"

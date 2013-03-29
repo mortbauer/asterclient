@@ -8,7 +8,7 @@ def make_group_liaisons(group1,group2,dofs):
     return lias
 
 
-parameters = (('lenkkopfsteifigkeit',{
+parameters = ({'name':'lenkkopfsteifigkeit',
     'beam_parts':['forklong'],
     'bar_parts':[],
     'boundaries': [
@@ -19,9 +19,9 @@ parameters = (('lenkkopfsteifigkeit',{
     'liaisons_solide': [],
     'forces':[{'GROUP_NO':'p_fl_5','FX':-100}],
     'displacement_nodes':['p_fl_7'],
-    'study_type':'linear'}),
+    'study_type':'linear'},
 
-        ('tretlagersteifigkeit',{
+    {'name':'tretlagersteifigkeit',
     'beam_parts':['forkshor','adap45','backsu','forkadap'],
     'bar_parts': ['kettena'],
     'boundaries':[
@@ -32,5 +32,5 @@ parameters = (('lenkkopfsteifigkeit',{
             ('p_f_4','p_fs_4'),('p_f_1_l','p_a_1_l'),('p_f_0_r','p_b_0_r','p_k_0_r'),('p_a_1b_r','p_k_1b_r')]],
     'forces':[ {'GROUP_NO':'p_a_1e_r','FZ':-1000 * sin(radians(82.5)), 'FX': -1000 * cos(radians(82.5))}],
     'displacement_nodes': ['p_a_1e_r'] ,
-    'study_type':['linear']})
+    'study_type':['linear']}
         )
