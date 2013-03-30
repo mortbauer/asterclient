@@ -19,8 +19,14 @@ import logging
 import random
 import string
 #import ipdb
-#import debug
+import debug
 
+class AsterClientException(Exception):
+    pass
+
+logger = logging.getLogger('asterclient')
+logger.addHandler(logging.StreamHandler(sys.stdout))
+logger.setLevel('INFO')
 def abspath(path,basepath=None):
     if os.path.isabs(path):
         return path
@@ -114,6 +120,7 @@ def runstudy(calculations,builddir,studyname,studynumber,
             os.makedirs(buildpath)
         except:
             if options.force:
+                logger.info('buildpath is "{0}"'.format(buildpath))
                 for x in os.listdir(buildpath):
                     os.remove(os.path.join(buildpath,x))
 
@@ -176,8 +183,9 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 try:
                     addsource = os.path.join(srcdir,file_)
                     shutil.copyfile(addsource,os.path.join(buildpath,os.path.split(file_)[-1]))
+                    logger.info('copied file "{0}" to "{1}"'.format(addsource,os.path.join(buildpath,os.path.split(file_)[-1])))
                 except:
-                    logging.exception('failed to copy input file "{0}"'.format(file_))
+                    logger.exception('failed to copy input file "{0}"'.format(file_))
                     raise
 
         # create command
@@ -217,20 +225,21 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 c.append('params={{\'params\':parameters[{0}]}};params[\'params\'][\'studynumber\']={0}'
                 .format(studynumber))
 
-            print(arguments)
             c.append('res=supervisor.main(coreopts=getargs({0}),params=params);sys.exit(res)'.format(arguments))
             if foreground:
                 tee = '| tee {0}; exit $PIPESTATUS'.format(os.path.join(buildpath,'fort.6'))
-                bashscript = profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
+                #bashscript = profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
                 #bashscript = 'source /data/devel/python/aster/bin/set_env\n' + profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
                 #res = subprocess.call([profile['aster'],'-c',';'.join(c)])
                 #res = subprocess.call([profile['aster'],'-c',';'.join(c),tee])
-                res = subprocess.call(['bash','-c',bashscript])
+                #res = subprocess.call(['bash','-c',bashscript])
             else:
-                protocol = open(os.path.join(os.path.split(buildpath)[0],'progress.txt'),'a')
-                res = subprocess.call([profile['aster'],'-c',';'.join(c)],stdout=protocol)
-                protocol.close()
-                shutil.copyfile(os.path.join(builddir,studyname,protocol.name),os.path.join(buildpath,'fort.6'))
+                tee = ('| tee {0} >> {1} ; exit $PIPESTATUS'.
+                format(os.path.join(buildpath,'fort.6'),
+                        os.path.join(buildpath,'../progress.txt')))
+                #res = subprocess.call([profile['aster'],'-c',';'.join(c)],stdout=protocol)
+            bashscript = profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
+            res = subprocess.call(['bash','-c',bashscript])
             print >> sys.stdout, ('code aster run "{1}:{2}" ended: {0}'.
                     format(termcolor.colored('OK',color='green') if not res else ('with ' +
                         termcolor.colored('Errors',color='red')),
@@ -242,17 +251,17 @@ def runstudy(calculations,builddir,studyname,studynumber,
                     allres = glob.glob(x[0])
                     if len(allres) == 1:
                         if os.path.getsize(allres[0]) == 0:
-                                logging.warn('result file "{0}" is empty'.format(x[1]))
+                                logger.warn('result file "{0}" is empty'.format(x[1]))
                         else:
                             shutil.copyfile(os.path.join(buildpath,allres[0]),os.path.join(outputpath,x[1]))
                     elif len(allres) > 1:
                         for f in allres:
                             if os.path.getsize(f) == 0:
-                                logging.warn('result file "{0}" is empty'.format(f))
+                                logger.warn('result file "{0}" is empty'.format(f))
                             else:
                                 shutil.copyfile(os.path.join(buildpath,f),os.path.join(outputpath,'{0}_{1}'.format(x[1],f)))
                     else:
-                        logging.warn('no files found for "{0}"'.format(x[0]))
+                        logger.warn('no files found for "{0}"'.format(x[0]))
 
                 # copy the standard result files
                 shutil.copyfile(os.path.join(buildpath,'fort.6'),os.path.join(outputpath,calculation['name']+'.mess'))
@@ -273,7 +282,7 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 if not res:
                     raise
                 else:
-                    logging.exception('ignore exception, since code aster run ended with an error')
+                    logger.exception('ignore exception, since code aster run ended with an error')
         except:
             raise
         finally:
@@ -328,6 +337,7 @@ def main(argv=None):
             distributionfile = abspath(profile['distributionfile'],basepath=profile['srcdir'])
         try:
             sys.path.append(os.path.split(distributionfile)[0])
+            # needs to have the ending py to work
             studies = __import__(os.path.split(distributionfile)[1]).parameters
             sys.path.remove(os.path.split(distributionfile)[0])
             #studies = imp.load_source(*os.path.split(distributionfile)).parameters
@@ -335,7 +345,7 @@ def main(argv=None):
             print >> sys.stderr, 'couldn\'t import the distributionfile, the traceback:'
             raise
     else:
-        studies = ('',{})
+        studies = [{'name':'main'}]
         distributionfile = None
     # do whatever has to be done
     if options.action == 'info':
@@ -359,27 +369,52 @@ def main(argv=None):
                 profile[key] = getattr(options,key)
         # check the profile file
         # check if all minimum needed keys are available
-        def checkkeyinprofile(profile,key):
-            if not key in profile:
-                print >> sys.stderr, ('"{0}" is missing in '
-                'your profile file'.format(key))
-                sys.exit(1)
+        if not 'meshfile' in profile:
+            logger.error('you need to specify a meshfile')
+            raise AsterClientException
 
-        checkkeyinprofile(profile,'meshfile')
-        checkkeyinprofile(profile,'calculations')
-        def check_min_keys(dict_):
-            if not 'name' in calc or not calc['name']:
-                print >> sys.stderr, ('you need to specify a'
-                ' name for every calculation')
-                return False
-            if not 'commandfile' in calc or not calc['commandfile']:
-                print >> sys.stderr, ('you need to specify a'
-                ' commandfile for every calculation')
-                return False
-            return True
+        if not 'calculations' in profile:
+            logger.error('you need to specify at least one calculation')
+            raise AsterClientException
+
+        # test calculations specified in the profile
+        calcnames = []
         for calc in profile['calculations']:
-            if not check_min_keys(calc):
-                sys.exit(1)
+            if not 'name' in calc or not calc['name']:
+                logger.error('you need to specify a'
+                ' name for every calculation')
+                raise AsterClientException
+            if calc['name'] in calcnames:
+                logger.error('calculation names must be unique, "{0}" isn\'t'.
+                        format(calc['name']))
+                raise AsterClientException
+            else:
+                calcnames.append(calc['name'])
+
+            if not 'commandfile' in calc or not calc['commandfile']:
+                logger.error('you need to specify a'
+                ' commandfile for every calculation')
+                raise AsterClientException
+
+        # test the studies specified in the distributionfile
+        studynames = []
+        studyparams = set(studies[0].keys())
+        for study in studies:
+            if not 'name' in study:
+                logger.error('every study need a name')
+                raise AsterClientException
+            if study['name'] in studynames:
+                logger.error('studynames need to be unique, "{0}" isn\'t'.
+                        format(study['name']))
+                raise AsterClientException
+            else:
+                studynames.append(study['name'])
+
+            if set(study.keys()) != studyparams:
+                logger.error('all studies need to have the same keys:'
+                '\n{0}\nare different'.format(studyparams.difference(
+                    set(study.keys()))))
+                raise AsterClientException
         # check if all keys have values
         def check_values(dict_):
             for key in dict_:
@@ -414,7 +449,6 @@ def main(argv=None):
         # get the studies which should be run
         studies_to_run = []
         if options.study:
-            studynames = [i['name'] for i in studies]
             for x in options.study:
                 try:
                     studies_to_run.append((int(x),studies[int(x)]))
@@ -485,12 +519,14 @@ def main(argv=None):
             # start the process stepped
             counter = 0
             ncpus = multiprocessing.cpu_count()
+            #ipdb.set_trace()
             for i in range(len(processes)):
                 processes[i][1].start()
                 counter += 1
-                if counter == ncpus or len(processes) < ncpus:
+                if counter == ncpus or counter == len(processes):
                     time.sleep(0.1)
                     for j in range(min(len(processes),ncpus)):
+                        #print('trying to join process',j)
                         processes[j][1].join()
                     counter = 0
 
