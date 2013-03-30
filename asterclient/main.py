@@ -289,9 +289,7 @@ def runstudy(calculations,builddir,studyname,studynumber,
             os.chdir(curdir)
         # copy the results
 
-def main(argv=None):
-    processes = []
-    def shutdown(signum,frame):
+def shutdown(signum,frame):
         stderr = sys.stderr
         stdout = sys.stdout
         sys.stderr = os.devnull
@@ -303,6 +301,7 @@ def main(argv=None):
         sys.stdout = stdout
         print >> sys.stdout, ('killed all calculations trough user')
 
+def main(argv=None):
     signal.signal(signal.SIGINT,shutdown)
 
     if not argv:
@@ -499,6 +498,8 @@ def main(argv=None):
         from Execution.E_SUPERV import SUPERV
         from Execution.E_Core import getargs
         supervisor = SUPERV()
+
+        processes = []
 
         if options.sequential:
             for studynumber,study in studies_to_run:
