@@ -249,19 +249,13 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 for x in resultfiles:
                     # everything else, with globbing
                     allres = glob.glob(x[0])
-                    if len(allres) == 1:
-                        if os.path.getsize(allres[0]) == 0:
-                                logger.warn('result file "{0}" is empty'.format(x[1]))
-                        else:
-                            shutil.copyfile(os.path.join(buildpath,allres[0]),os.path.join(outputpath,x[1]))
-                    elif len(allres) > 1:
-                        for f in allres:
-                            if os.path.getsize(f) == 0:
-                                logger.warn('result file "{0}" is empty'.format(f))
-                            else:
-                                shutil.copyfile(os.path.join(buildpath,f),os.path.join(outputpath,'{0}_{1}'.format(x[1],f)))
-                    else:
+                    if len(allres) == 0:
                         logger.warn('no files found for "{0}"'.format(x[0]))
+                    for f in allres:
+                        if os.path.getsize(f) == 0:
+                            logger.warn('result file "{0}" is empty'.format(f))
+                        else:
+                            shutil.copyfile(f,os.path.join(outputpath,f))
 
                 # copy the standard result files
                 shutil.copyfile(os.path.join(buildpath,'fort.6'),os.path.join(outputpath,calculation['name']+'.mess'))
