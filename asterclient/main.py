@@ -513,7 +513,7 @@ def main(argv=None):
                     'options':options})))
             # start the process stepped
             counter = 0
-            ncpus = multiprocessing.cpu_count()
+            ncpus = 1 # multiprocessing.cpu_count()
             #ipdb.set_trace()
             for i in range(len(processes)):
                 processes[i][1].start()
