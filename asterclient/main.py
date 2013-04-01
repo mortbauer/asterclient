@@ -157,10 +157,10 @@ def runstudy(calculations,builddir,studyname,studynumber,
         # previous step
         if 'poursuite' in calculation:
             zipf = zipfile.ZipFile(abspath('glob.1.zip',basepath=os.path.join(outdir,studyname,
-                calculation['poursuite'])),'r')
+                calculation['poursuite'])),'r',allowZip64=True)
             zipf.extractall(path=buildpath)
             zipf = zipfile.ZipFile(abspath('pick.1.zip',basepath=os.path.join(outdir,studyname,
-                calculation['poursuite'])),'r')
+                calculation['poursuite'])),'r',allowZip64=True)
             zipf.extractall(path=buildpath)
 
         # create a list of files which need to be copied to the
@@ -265,10 +265,10 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 if distributionfile:
                     shutil.copyfile(os.path.join(buildpath,'distr.py'),os.path.join(outputpath,profile['distributionfile']+'.py'))
                 # copy the zipped base
-                zipf = zipfile.ZipFile(os.path.join(outputpath,'glob.1.zip'),'w')
+                zipf = zipfile.ZipFile(os.path.join(outputpath,'glob.1.zip'),'w',allowZip64=True)
                 zipf.write('glob.1')
                 zipf.close()
-                zipf = zipfile.ZipFile(os.path.join(outputpath,'pick.1.zip'),'w')
+                zipf = zipfile.ZipFile(os.path.join(outputpath,'pick.1.zip'),'w',allowZip64=True)
                 zipf.write('pick.1')
                 zipf.close()
             except:
