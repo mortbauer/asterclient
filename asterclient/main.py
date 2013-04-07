@@ -109,7 +109,7 @@ def info_calculations(profilename,profile):
         print('\t{0}: {1}\n'.format(i,profile['calculations'][i]['name']))
 
 def runstudy(calculations,builddir,studyname,studynumber,
-        profile,outdir,distributionfile,srcdir,options,
+        profile,outdir,distributionfile,srcdir,options,study,
         foreground=False):
     for calculation in calculations:
         buildpath = os.path.join(builddir,
@@ -128,8 +128,12 @@ def runstudy(calculations,builddir,studyname,studynumber,
         shutil.copyfile(abspath(profile['elements'],basepath=srcdir),
                 os.path.join(buildpath,'elem.1'))
         # copy the mesh file
-        shutil.copyfile(abspath(profile['meshfile'],basepath=srcdir),
-                os.path.join(buildpath,'fort.20'))
+        if 'meshfile' in study:
+            shutil.copyfile(abspath(study['meshfile'],
+                basepath=srcdir), os.path.join(buildpath,'fort.20'))
+        else:
+            shutil.copyfile(abspath(profile['meshfile'],
+                basepath=srcdir), os.path.join(buildpath,'fort.20'))
 
         # create output directory
         outputpath = os.path.join(outdir,studyname,calculation['name'])
@@ -261,7 +265,10 @@ def runstudy(calculations,builddir,studyname,studynumber,
                 shutil.copyfile(os.path.join(buildpath,'fort.6'),os.path.join(outputpath,calculation['name']+'.mess'))
                 # copy the commandfile as well as the parameters and the mesh
                 shutil.copyfile(os.path.join(buildpath,'fort.1'),os.path.join(outputpath,calculation['commandfile']))
-                shutil.copyfile(os.path.join(buildpath,'fort.20'),os.path.join(outputpath,profile['meshfile']))
+                if 'meshfile' in study:
+                    shutil.copyfile(os.path.join(buildpath,'fort.20'),os.path.join(outputpath,study['meshfile']))
+                else:
+                    shutil.copyfile(os.path.join(buildpath,'fort.20'),os.path.join(outputpath,profile['meshfile']))
                 if distributionfile:
                     shutil.copyfile(os.path.join(buildpath,'distr.py'),os.path.join(outputpath,profile['distributionfile']+'.py'))
                 # copy the zipped base
@@ -362,9 +369,6 @@ def main(argv=None):
                 profile[key] = getattr(options,key)
         # check the profile file
         # check if all minimum needed keys are available
-        if not 'meshfile' in profile:
-            logger.error('you need to specify a meshfile')
-            raise AsterClientException
 
         if not 'calculations' in profile:
             logger.error('you need to specify at least one calculation')
@@ -389,6 +393,7 @@ def main(argv=None):
                 ' commandfile for every calculation')
                 raise AsterClientException
 
+
         # test the studies specified in the distributionfile
         studynames = []
         studyparams = set(studies[0].keys())
@@ -402,6 +407,11 @@ def main(argv=None):
                 raise AsterClientException
             else:
                 studynames.append(study['name'])
+
+            if not 'meshfile' in study and not 'meshfile' in profile:
+                logger.error('you need to specify a meshfile for each'
+                        ' study')
+                raise AsterClientException
 
             if set(study.keys()) != studyparams:
                 logger.error('all studies need to have the same keys:'
@@ -501,7 +511,7 @@ def main(argv=None):
                         'builddir':builddir,'studyname':study['name'],'studynumber':studynumber,
                         'profile':profile,'outdir':outdir,'srcdir':srcdir,
                         'distributionfile':distributionfile,
-                        'options':options,'foreground':True})
+                        'options':options,'study':study,'foreground':True})
 
         else:
             for studynumber,study in studies_to_run:
@@ -510,7 +520,7 @@ def main(argv=None):
                     'builddir':builddir,'studyname':study['name'],'studynumber':studynumber,
                     'profile':profile,'outdir':outdir,'srcdir':srcdir,
                     'distributionfile':distributionfile,
-                    'options':options})))
+                    'options':options,'study':study})))
             # start the process stepped
             counter = 0
             ncpus = 1 # multiprocessing.cpu_count()
