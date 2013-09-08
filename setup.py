@@ -30,9 +30,6 @@ def parse_dependency_links(file_name):
     return dependency_links
 
 
-    base = "Win32GUI"
-
-
 setup(name='asterclient',
       entry_points = {
           'console_scripts' :
