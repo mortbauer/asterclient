@@ -1,6 +1,6 @@
 import os
 import sys
-import zipfile
+from zipfile import ZipFile
 import shutil
 import yaml
 import time
@@ -21,19 +21,25 @@ import string
 #import ipdb
 import debug
 
-class AsterClientException(Exception):
-    pass
-
 logger = logging.getLogger('asterclient')
 logger.addHandler(logging.StreamHandler(sys.stdout))
 logger.setLevel('INFO')
-def abspath(path,basepath=None):
-    if os.path.isabs(path):
-        return path
-    elif basepath:
-        return os.path.abspath(os.path.join(basepath,path))
-    else:
-        return os.path.abspath(path)
+
+def get_code_aster_error(filename):
+    res = []
+    record = False
+    with open(filename,'r') as f:
+        for line in f:
+            if line.startswith('>>') and not record:
+                record = True
+            elif line.startswith('>>') and record:
+                record = False
+            elif record:
+                res.append(line)
+    return res
+
+class AsterClientException(Exception):
+    pass
 
 def make_pasrer():
     parser = argparse.ArgumentParser()
@@ -86,6 +92,8 @@ def make_pasrer():
         help="force to flush of the output after each line")
     runparser.add_argument('--verif', action='store_true', default=False,
         help="only check the syntax of the command file is done")
+    runparser.add_argument('--prepare', action='store_true', default=False,
+        help="only prepare everything")
     return parser
 
 def info_studies(parameters,studyname=None):
@@ -108,187 +116,468 @@ def info_calculations(profilename,profile):
     for i in range(len(profile['calculations'])):
         print('\t{0}: {1}\n'.format(i,profile['calculations'][i]['name']))
 
-def runstudy(calculations,builddir,studyname,studynumber,
-        profile,outdir,distributionfile,srcdir,options,study,
-        foreground=False):
-    for calculation in calculations:
-        buildpath = os.path.join(builddir,
-                profile.get('project',''.join(random.choice(
-                    string.ascii_uppercase + string.digits)
-                    for x in range(5))),studyname,calculation['name'])
-        try:
-            os.makedirs(buildpath)
-        except:
-            if options.force:
-                logger.info('buildpath is "{0}"'.format(buildpath))
-                for x in os.listdir(buildpath):
-                    os.remove(os.path.join(buildpath,x))
 
-        # copy the elements
-        shutil.copyfile(abspath(profile['elements'],basepath=srcdir),
-                os.path.join(buildpath,'elem.1'))
-        # copy the mesh file
-        if 'meshfile' in study:
-            shutil.copyfile(abspath(study['meshfile'],
-                basepath=srcdir), os.path.join(buildpath,'fort.20'))
+class Config(object):
+    def __init__(self,asterclient,options):
+        self.distributionfile = asterclient.distributionfile
+        self.force = options.force
+        for key in asterclient.profile:
+            setattr(self,key,asterclient[key])
+
+class AsterClient(object):
+    def __init__(self,options):
+        self.options = options
+        self._remove_at_exit = []
+        self.profile = self._load_profile()
+        self._prepare_paths_for_run()
+        self.studies = self._load_studies()
+        self._check_settings()
+        self.config = Config(self,self.options)
+
+    def _abspath(self,path):
+        if os.path.isabs(path):
+            return path
         else:
-            shutil.copyfile(abspath(profile['meshfile'],
-                basepath=srcdir), os.path.join(buildpath,'fort.20'))
+            return os.path.abspath(os.path.join(self.basepath,path))
 
-        # create output directory
-        outputpath = os.path.join(outdir,studyname,calculation['name'])
+    def _load_profile(self):
+        # get default profile
+        if not os.environ.get('ASTER_ROOT'):
+            raise AsterClientException(
+                'the ASTER_ROOT environment variable must be set')
+        profile = yaml.load(pkgutil.get_data(
+            __name__,os.path.join('data','defaults.yml')))
+        # read provided profile
         try:
-            os.makedirs(outputpath)
+            profile.update(yaml.load(self.options.profile.read()))
+        except Exception as e:
+            raise AsterClientException(
+                'the profile {0} couldn\'t be parsed:\n\n{1}'
+                .format(self.options.profile.name,e))
+        self._sanitize_profile(profile)
+        return profile
+
+    def _sanitize_profile(self,profile):
+        # make paths absolute
+        for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
+            if not os.path.isabs(profile[pathkey]):
+                profile[pathkey] = os.path.join(
+                    profile['aster_root'],profile['version'],profile[pathkey])
+        if not os.path.isabs(profile['rep_outils']):
+            profile['rep_outils'] = os.path.join(
+                profile['aster_root'],profile['rep_outils'])
+        self._merge_options_and_profile()
+
+    def _load_studies(self):
+        if 'distributionfile' in self.profile:
+            distributionfile = self._abspath(self.profile['distributionfile'])
+            distributionfilename = os.path.splitext(os.path.split(distributionfile)[-1])[0]
+            try:
+                studies = imp.load_source(distributionfilename,distributionfile).parameters
+            except:
+                    raise AsterClientException('couldn\'t import distributionfile')
+            self.distributionfile = distributionfile
+        else:
+            studies = [{'name':'main'}]
+            self.distributionfile = None
+        return studies
+
+    def _merge_options_and_profile(self):
+        # populate the commandline options into the profile
+        for key in ['bibpyt','memjeveux','memory','tpmax','max_base',
+                'dbgjeveux','mode','interact','rep_outils','rep_mat',
+                'rep_dex','suivi_batch','verif','workdir']:
+            if getattr(self.options,key) != None:
+                self.profile[key] = getattr(self.options,key)
+
+    def _check_settings(self):
+        # check if all minimum needed keys are available
+        if not 'calculations' in self.profile:
+            raise AsterClientException('you need to specify at least one calculation')
+        self._calculation_names = []
+        self._study_names = []
+        for calculation in self.profile['calculations']:
+            self._sanitize_calculation_options(calculation)
+        # check the studie
+        study_keys = set()
+        i = 0
+        for study in self.studies:
+            self._sanitize_study_options(study)
+            study_keys.add(set(self.study.keys()))
+            study['studynumber'] = i
+            i += 1
+
+        # check if all studies have the same keys
+        if len(study_keys) > 1:
+            raise AsterClientException('all studies need to have the same keys')
+
+    def _sanitize_calculation_options(self,calcualtion):
+        # test calculations specified in the profile
+        name = calculation.get('name','')
+        if not name:
+            raise AsterClientException('no calcualtion name specified')
+        if name in self._calculation_names:
+            raise AsterClientException('calculation names {0} isn\'t unique'.format(name))
+        else:
+            self._calculation_names.append(name)
+
+        commandfile = calculation.get('commandfile','')
+        if not commandfile:
+            raise AsterClientException('no commandfile specified for "{0}"'.format(name))
+        calculation['commandfile'] = self._abspath(commandfile)
+
+    def _sanitize_study_options(self,study):
+        # test the studies specified in the distributionfile
+        name = study.get('name','')
+        if not name:
+            raise AsterClientException('every study needs a name')
+        if name in self._study_names:
+            raise AsterClientException('study names {0} isn\'t unique'.format(name))
+        else:
+            self._study_names.append(name)
+
+        meshfile = study.get('meshfile',self.profile.get('meshfile'))
+        if not meshfile:
+            raise AsterClientException('no meshfile specified for "{0}"'.format(name))
+        study['meshfile'] = self._abspath(meshfile)
+
+    def _get_calculations(self):
+        # get the calculations which should be run
+        if self.options.calculation:
+            calculations = []
+            calcnames = [calculation['name'] for i in self.profile['calculations']]
+            for x in self.options.calculation:
+                try:
+                    # get by index
+                    key = int(x)
+                except:
+                    key = None
+                if not key:
+                    try:
+                        key = calcnames.index(x)
+                    except:
+                        raise AsterClientException('ther is no calculation "{0}"'.format(x))
+                calculations.append(self.profile['calculations'][key])
+        else:
+            # take all if none is specified
+            calculations = self.profile['calculations']
+        return calculations
+
+    def _get_studies(self):
+        # get the studies which should be run
+        if self.options.study:
+            studies = []
+            studynames = [study['name'] for study in self.studies]
+            for x in self.options.study:
+                try:
+                    # get by index
+                    key = int(x)
+                except:
+                    key = None
+                if not key:
+                    try:
+                        key = studynames.index(x)
+                    except:
+                        raise AsterClientException('ther is no study "{0}"'.format(x))
+                studies.append(self.studies[key])
+        else:
+            studies = self.studies
+        return self.studies
+
+    def _prepare_paths_for_run(self):
+        """ set up the paths
+        """
+        self.basepath = self.profile.get('srcdir')
+        self.outdir = self._abspath(self.profile.get('outdir','results'))
+        # setup the builddir
+        builddir = self.profile.get('workdir','')
+        if not builddir:
+            builddir = tempfile.mkdtemp(
+                '_asterclient',self.profile.get('project','tmp'))
+            self._remove_at_exit.append(builddir)
+        else:
+            builddir = self._abspath(builddir)
+            try:
+                os.makedirs(builddir)
+            except:
+                pass
+        self.builddir = builddir
+
+    def _setup_aster(self):
+        """ a bit obsolete here """
+        sys.path.append(profile['bibpyt'])
+        # symlink cata to Cata/cata
+        try:
+            os.symlink(os.path.join(profile['cata'],'cata.py'),os.path.join(profile['bibpyt'],'Cata','cata.py'))
+        except OSError as e:
+            if e.errno == os.errno.EEXIST:
+                logger.warn('couldn\'t symlink cata.py')
+                #os.remove(os.path.join(profile['bibpyt'],'Cata','cata.py'))
+                #os.symlink(os.path.join(profile['cata'],'cata.py'),os.path.join(profile['bibpyt'],'Cata','cata.py'))
+        from Execution.E_SUPERV import SUPERV
+        from Execution.E_Core import getargs
+        self.supervisor = SUPERV()
+
+    def _run_sequential(self):
+        for study in self.studies_to_run:
+            previous = None
+            for calculation in self.calculations_to_run:
+                calc = Calculation(self.config,study,calculation)
+                calc.init()
+                previous = calc.run()
+
+    def _run_threaded(self):
+        # start the process stepped
+        counter = 0
+        ncpus = 1 # multiprocessing.cpu_count()
+        #ipdb.set_trace()
+        for i in range(len(processes)):
+            processes[i][1].start()
+            counter += 1
+            if counter == ncpus or counter == len(processes):
+                time.sleep(0.1)
+                for j in range(min(len(processes),ncpus)):
+                    #print('trying to join process',j)
+                    processes[j][1].join()
+                counter = 0
+
+
+    def run(self):
+        # do whatever has to be done
+        if self.options.action == 'info':
+            info_studies(self.studies)
+            info_calculations(self.options.profile.name,self.profile)
+        elif self.options.action == 'run':
+            self.run()
+
+    def _run(self):
+        self.calculations_to_run = self._get_calculations()
+        self.studies_to_run = self._get_studies()
+        if self.options.sequential:
+            self._run_sequential()
+
+
+class Calculation(object):
+    # unfortunately POURSUITE only works in a new process,
+    # therefore let us call everything in a knew process
+    def __init__(self,config,study,calculation,previous=None):
+        self.config = config
+        self.study = study
+        self.calculation = calculation
+        # my previous calculation, needed if we resume
+        self.previous = previous
+        self.response = {}
+
+    def _prepare_paths(self):
+        self.buildpath = os.path.join(
+            self.builddir,self.study['name'],self.calculation['name'])
+        self.outputpath = os.path.join(
+            self.outdir,self.study['name'],self.calculation['name'])
+        # make sure buildpath exists and is clean
+        try:
+            os.makedirs(self.buildpath)
         except:
-            if not options.force:
-                print >> sys.stderr, ('output directory "{0}" exists already,'
-                'use the --force option to overwrite it anyways'
-                .format(outdir))
-                sys.exit(1)
+            if self.config.force:
+                logger.info('cleaning buildpath "{0}"'.format(self.buildpath))
+                shutil.rmtree(buildpath)
+                os.makedirs(buildpath)
             else:
-                # if force option clean up directory
+                logger.warn('buildpath "{0}" exists and holds data'.format(self.buildpath))
+        # make sure output directory exists and is clean
+        try:
+            os.makedirs(self.outputpath)
+        except:
+            if self.config.force:
+                logger.info('cleaning outputpath "{0}"'.format(self.outputpath))
                 shutil.rmtree(outputpath)
                 os.makedirs(outputpath)
+            else:
+                logger.warn('outputpath "{0}" exists and holds data'.format(self.outputpath))
+        self.infofile = os.path.join(self.buildpath,'fort.6')
 
-        # copy commandfile to the buildpath
-        shutil.copyfile(abspath(calculation['commandfile'],basepath=srcdir),
-                os.path.join(buildpath,'fort.1'))
-        # copy distributionfile to the buildpath
-        if distributionfile:
-            shutil.copyfile(abspath(profile['distributionfile']+'.py',basepath=srcdir),
-                    os.path.join(buildpath,'distr.py'))
+    def _copy_files(self):
+        # copy the elements catalog
+        shutil.copyfile(
+            self.config.elements,os.path.join(self.buildpath,'elem.1'))
+        # copy meshfile
+        shutil.copyfile(self.study['meshfile'],
+                        os.path.join(self.uildpath,'fort.20'))
+        # copy commandfile
+        shutil.copyfile(
+            self.calculation['commandfile'],
+            os.path.join(self.buildpath,'fort.1'))
         # if calculation is a continued one copy the results from the
-        # previous step
-        if 'poursuite' in calculation:
-            zipf = zipfile.ZipFile(abspath('glob.1.zip',basepath=os.path.join(outdir,studyname,
-                calculation['poursuite'])),'r',allowZip64=True)
-            zipf.extractall(path=buildpath)
-            zipf = zipfile.ZipFile(abspath('pick.1.zip',basepath=os.path.join(outdir,studyname,
-                calculation['poursuite'])),'r',allowZip64=True)
-            zipf.extractall(path=buildpath)
+        if 'poursuite' in self.calculation:
+            with ZipFile(self.previous['glob.1.zip'],'r',allowZip64=True) as zipf:
+                zipf.extractall(path=buildpath)
+            with zipfile.ZipFile(previous['pick.1.zip'],'r',allowZip64=True) as zipf:
+                zipf.extractall(path=buildpath)
 
+    def _create_resultfiles(self):
+        # the resultfiles need already to be created for fortran
         # create a list of files which need to be copied to the
         # resultdirectory
-        resultfiles = []
-        # create additional resultfiles
-        if 'resultfiles' in calculation:
-            for file_ in calculation['resultfiles']:
-                for key in file_:
+        resultfiles = {}
+        if 'resultfiles' in self.calculation:
+            for f in self.calculation['resultfiles']:
+                for key in f:
                     # result files for acces through fortran
-                    if type(file_[key]) == int:
-                        with open(os.path.join(buildpath,'fort.%s' % file_[key]),'w') as f:
-                            resultfiles.append(('fort.%s' % file_[key],key))
+                    if type(f[key]) == int:
+                        name = 'fort.%s' % f[key]
+                        with open(os.path.join(buildpath,name),'w') as f:
+                            resultfiles[key] = name
                     else:
-                        resultfiles.append(('{0}{1}'.format(key,file_[key]),key))
+                        resultfiles[key] = f[key]
+        self.resultfiles = resultfiles
 
-        # copy additional inputfiles
-        if 'inputfiles' in calculation:
-            for file_ in calculation['inputfiles']:
+    def _copy_additional_inputfiles(self):
+        if 'inputfiles' in self.calculation:
+            for f in self.calculation['inputfiles']:
                 try:
-                    addsource = os.path.join(srcdir,file_)
-                    shutil.copyfile(addsource,os.path.join(buildpath,os.path.split(file_)[-1]))
-                    logger.info('copied file "{0}" to "{1}"'.format(addsource,os.path.join(buildpath,os.path.split(file_)[-1])))
+                    fpath = os.path.join(self.config.srcdir,f)
+                    shutil.copyfile(fpath,os.path.join(buildpath,os.path.split(f)[-1]))
                 except:
-                    logger.exception('failed to copy input file "{0}"'.format(file_))
-                    raise
+                    logger.error('failed to copy input file "{0}"'.format(f))
 
-        # create command
+    def _create_runpy(self):
         arguments = ['supervisor',
-                '--bibpyt', profile['bibpyt'],
+                '--bibpyt', self.config['bibpyt'],
                 '--commandes','fort.1',
-                '--mode',profile['mode'],
-                '--rep_outils',profile['rep_outils'],
-                '--rep_mat',profile['rep_mat'],
-                '--rep_dex',profile['rep_dex'],
-                '--bibpyt',profile['bibpyt'],
-                '--tpmax',str(profile['tpmax']),
-                '--memjeveux',str(profile['memjeveux'])]
-        if profile['memory']:
-            arguments.extend(['--memory',profile['memory']])
-        if profile['max_base']:
-            arguments.extend(['--max_base',profile['max_base']])
+                '--mode',self.config['mode'],
+                '--rep_outils',self.config['rep_outils'],
+                '--rep_mat',self.config['rep_mat'],
+                '--rep_dex',self.config['rep_dex'],
+                '--bibpyt',self.config['bibpyt'],
+                '--tpmax',str(self.config['tpmax']),
+                '--memjeveux',str(self.config['memjeveux'])]
+        if self.config['memory']:
+            arguments.extend(['--memory',self.config['memory']])
+        if self.config['max_base']:
+            arguments.extend(['--max_base',self.config['max_base']])
         if profile['suivi_batch']:
             arguments.append('--suivi_batch')
+
+        runpy = """#!{aster}
+        #coding=utf-8
+        import sys
+        sys.path.insert(0,{bibpyt})
+        sys.path.extend({syspath})
+        from Execution.E_SUPERV import SUPERV
+        from Execution.E_Core import getargs
+        supervisor = SUPERV()
+        res = supervisor.main(coreopts=getargs({arguments}),params={params})
+        sys.exit(res)
+        """.format(aster=self.config.aster,
+                   bibpyt=self.config.bibpyt,
+                   syspath=sys.path,
+                   arguments=arguments,
+                   params=self.study)
+
+        self.runpy_path = os.path.join(self.buildpath,'run.py')
+        with open(self.runpy_path,'w') as f:
+            f.write(runpy)
+        os.chmod(self.runpy_path,0777)
+
+    def _create_runsh(self):
+        runsh = """#!/usr/bin/sh
+        export LD_LIBRARY_PATH="{LD_LIBRARY_PATH}"
+        exec run.py
+        """.format(LD_LIBRARY_PATH=os.pathsep + buildpath + os.environ['LD_LIBRARY_PATH'])
+
+        self.runsh_path = os.path.join(self.buildpath,'run.py')
+        with open(self.runsh_path,'w') as f:
+            f.write(runsh)
+        os.chmod(self.runsh_path,0777)
+
+    def _run_bashed(self):
+        if self.config.forground:
+            tee = '| tee {0}; exit $PIPESTATUS'.format(self.infofile)
+        else:
+            tee = ''
+        bashscript = '{runsh} {tee}'.format(runsh=self.runsh_path,tee=tee)
+        self.result = subprocess.call(['bash','-c',bashscript])
+
+    def _run_info(self):
+        logger.info('code aster run "{study}:{calculation}" ended: {status}'.
+                format(status = 'OK'if not self.result else 'with Errors',
+                       study = self.study['name'],
+                       calculation = self.calculation['name']))
+        if self.result:
+            logger.info('\n'.join(get_code_aster_error(self.infofile)))
+
+    def init(self):
+        self._prepare_paths()
+        self._copy_files()
+        self._copy_additional_inputfiles()
+        self._create_resultfiles()
+        self._create_runpy()
+        self._create_runsh()
+
+    def run(self):
+        if self.config.prepare:
+            self.init()
+            logger.info('cd to "{0}" and run "run.sh" '.format(buildpath))
+        else:
+            self.init()
+            self._run_bashed()
+            self._copy_results()
+            return self.response
+
+    def _copy_results(self):
+        # try to copy results even if errors occured
+        for name,fpath in self.resultfiles.itmes():
+            for f in glob.glob(os.path.join(self.buildpath,fpath)):
+                outname = name.format(name=os.path.splitext(os.path.split(f)[-1]))
+                if os.path.getsize(f) == 0:
+                    logger.warn('result file "{0}" is empty'.format(outname))
+            self._copy_result(f,os.path.join(self.outputpath,outname))
+
+        # copy the standard result files
+        self._copy_result(
+            os.path.join(self.buildpath,'fort.6'),
+            os.path.join(self.outputpath,self.calculation['name']+'.mess')
+        )
+        # copy the commandfile as well as the parameters and the mesh
+        self._copy_result(
+            os.path.join(self.buildpath,'fort.1'),
+            os.path.join(self.outputpath,self.calculation['commandfile']),
+        )
+        self._copy_result(
+            os.path.join(buildpath,'fort.20'),
+            os.path.join(self.outputpath,self.config.meshfile),
+        )
+        if self.config.distributionfile:
+            self._copy_result(
+                self.config.distributionfile,
+                os.path.join(self.outputpath,
+                             os.path.split(self.config.distributionfile)[-1])
+            )
+        # copy the zipped base
+        self._copy_result(
+            os.path.join(self.buildpath,'glob.1'),
+            os.path.join(self.outputpath,'glob.1.zip'),zipped=True
+        )
+        self._copy_result(
+            os.path.join(self.buildpath,'pick.1'),
+            os.path.join(self.outputpath,'pick.1.zip'),zipped=True
+        )
+        self.response['glob.1.zip'] = os.path.join(self.outputpath,'glob.1.zip')
+        self.response['pick.1.zip'] = os.path.join(self.outputpath,'pick.1.zip')
+
+    def _copy_result(self,fromfile,tofile,zipped=False):
         try:
-            curdir = os.curdir
-            os.chdir(buildpath)
-            ## add the workingdir to the LD_LIBRARY_PATH
-            os.environ['LD_LIBRARY_PATH'] = os.pathsep + buildpath + os.environ['LD_LIBRARY_PATH']
-            # execute the shit of it
-            #ier = supervisor.main(coreopts=getargs(arguments),params={'params':study[1]})
-            # unfortunately POURSUITE only works in a new process,
-            # therefore let us call everything in a knew process
-            c = ['import sys','sys.path.insert(0,\'{0}\')'.format(profile['bibpyt']),
-                    'from Execution.E_SUPERV import SUPERV',
-                    'from Execution.E_Core import getargs',
-                    'supervisor=SUPERV()',
-                    'from distr import parameters']
-            if not distributionfile:
-                c.append('parqams = {}')
+            if not zipped:
+                shutil.copyfile(fromfile,tofile)
             else:
-                c.append('params={{\'params\':parameters[{0}]}};params[\'params\'][\'studynumber\']={0}'
-                .format(studynumber))
-
-            c.append('res=supervisor.main(coreopts=getargs({0}),params=params);sys.exit(res)'.format(arguments))
-            if foreground:
-                tee = '| tee {0}; exit $PIPESTATUS'.format(os.path.join(buildpath,'fort.6'))
-                #bashscript = profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
-                #bashscript = 'source /data/devel/python/aster/bin/set_env\n' + profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
-                #res = subprocess.call([profile['aster'],'-c',';'.join(c)])
-                #res = subprocess.call([profile['aster'],'-c',';'.join(c),tee])
-                #res = subprocess.call(['bash','-c',bashscript])
+                zipf = zipfile.ZipFile(tofile,'w',allowZip64=True)
+                zipf.write(fromfile)
+                zipf.close()
+        except OSError as e:
+            if not self.result:
+                raise e
             else:
-                tee = ('| tee {0} >> {1} ; exit $PIPESTATUS'.
-                format(os.path.join(buildpath,'fort.6'),
-                        os.path.join(buildpath,'../progress.txt')))
-                #res = subprocess.call([profile['aster'],'-c',';'.join(c)],stdout=protocol)
-            bashscript = profile['aster'] + '<< END ' + tee + '\n' + ';'.join(c) + '\nEND'
-            res = subprocess.call(['bash','-c',bashscript])
-            print >> sys.stdout, ('code aster run "{1}:{2}" ended: {0}'.
-                    format(termcolor.colored('OK',color='green') if not res else ('with ' +
-                        termcolor.colored('Errors',color='red')),
-                        studyname,calculation['name']))
-            try:
-                # copy the results
-                for x in resultfiles:
-                    # everything else, with globbing
-                    allres = glob.glob(x[0])
-                    if len(allres) == 0:
-                        logger.warn('no files found for "{0}"'.format(x[0]))
-                    for f in allres:
-                        if os.path.getsize(f) == 0:
-                            logger.warn('result file "{0}" is empty'.format(f))
-                        else:
-                            shutil.copyfile(f,os.path.join(outputpath,f))
+                logger.warn('ignore exception for copiing result "{0}"'.format(name))
 
-                # copy the standard result files
-                shutil.copyfile(os.path.join(buildpath,'fort.6'),os.path.join(outputpath,calculation['name']+'.mess'))
-                # copy the commandfile as well as the parameters and the mesh
-                shutil.copyfile(os.path.join(buildpath,'fort.1'),os.path.join(outputpath,calculation['commandfile']))
-                if 'meshfile' in study:
-                    shutil.copyfile(os.path.join(buildpath,'fort.20'),os.path.join(outputpath,study['meshfile']))
-                else:
-                    shutil.copyfile(os.path.join(buildpath,'fort.20'),os.path.join(outputpath,profile['meshfile']))
-                if distributionfile:
-                    shutil.copyfile(os.path.join(buildpath,'distr.py'),os.path.join(outputpath,profile['distributionfile']+'.py'))
-                # copy the zipped base
-                zipf = zipfile.ZipFile(os.path.join(outputpath,'glob.1.zip'),'w',allowZip64=True)
-                zipf.write('glob.1')
-                zipf.close()
-                zipf = zipfile.ZipFile(os.path.join(outputpath,'pick.1.zip'),'w',allowZip64=True)
-                zipf.write('pick.1')
-                zipf.close()
-            except:
-                # only raise if run was succesful
-                if not res:
-                    raise
-                else:
-                    logger.exception('ignore exception, since code aster run ended with an error')
-        except:
-            raise
-        finally:
-            os.chdir(curdir)
-        # copy the results
 
 def shutdown(signum,frame):
         stderr = sys.stderr
@@ -309,231 +598,8 @@ def main(argv=None):
         argv = sys.argv[1:]
     parser = make_pasrer()
     options = parser.parse_args(argv)
-    # get default profile
-    try:
-        profile = yaml.load(pkgutil.get_data(__name__,
-                os.path.join('data','defaults.yml')))
-    except:
-        print >> sys.stderr, ('an error occured, make sure the'
-        ' ASTER_ROOT environment variable is set')
-        sys.exit(1)
-    # read profile
-    try:
-        profile.update(yaml.load(options.profile.read()))
-    except Exception as e:
-        print >> sys.stderr, ('following error occured while parsing'
-        ' "{0}:\n\n {1}\n please check your profile if it is valid yaml,'.
-        format(options.profile.name,e))
-        sys.exit(1)
-    # make paths absolute
-    for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
-        if not os.path.isabs(profile[pathkey]):
-            profile[pathkey] = os.path.join(profile['aster_root'],profile['version'],profile[pathkey])
-    if not os.path.isabs(profile['rep_outils']):
-        profile['rep_outils'] = os.path.join(profile['aster_root'],profile['rep_outils'])
-    # import distribution file if given
-    if 'distributionfile' in profile:
-        if not os.path.isabs(profile['distributionfile']):
-            distributionfile = abspath(profile['distributionfile'],basepath=profile['srcdir'])
-        try:
-            sys.path.append(os.path.split(distributionfile)[0])
-            # needs to have the ending py to work
-            studies = __import__(os.path.split(distributionfile)[1]).parameters
-            sys.path.remove(os.path.split(distributionfile)[0])
-            #studies = imp.load_source(*os.path.split(distributionfile)).parameters
-        except:
-            print >> sys.stderr, 'couldn\'t import the distributionfile, the traceback:'
-            raise
-    else:
-        studies = [{'name':'main'}]
-        distributionfile = None
-    # do whatever has to be done
-    if options.action == 'info':
-        if options.studies and studies:
-            info_studies(studies)
-        elif options.calculations:
-            info_calculations(options.profile.name,profile)
-        else:
-            if studies:
-                info_studies(studies)
-            info_calculations(options.profile.name,profile)
-    elif options.action == 'run':
-    # update profile with options from commandline
-        if options.workdir:
-            profile['workdir'] = options.workdir
-        # populate the commandline options into the profile
-        for key in ['bibpyt','memjeveux','memory','tpmax','max_base',
-                'dbgjeveux','mode','interact','rep_outils','rep_mat',
-                'rep_dex','suivi_batch','verif']:
-            if getattr(options,key) != None:
-                profile[key] = getattr(options,key)
-        # check the profile file
-        # check if all minimum needed keys are available
-
-        if not 'calculations' in profile:
-            logger.error('you need to specify at least one calculation')
-            raise AsterClientException
-
-        # test calculations specified in the profile
-        calcnames = []
-        for calc in profile['calculations']:
-            if not 'name' in calc or not calc['name']:
-                logger.error('you need to specify a'
-                ' name for every calculation')
-                raise AsterClientException
-            if calc['name'] in calcnames:
-                logger.error('calculation names must be unique, "{0}" isn\'t'.
-                        format(calc['name']))
-                raise AsterClientException
-            else:
-                calcnames.append(calc['name'])
-
-            if not 'commandfile' in calc or not calc['commandfile']:
-                logger.error('you need to specify a'
-                ' commandfile for every calculation')
-                raise AsterClientException
-
-
-        # test the studies specified in the distributionfile
-        studynames = []
-        studyparams = set(studies[0].keys())
-        for study in studies:
-            if not 'name' in study:
-                logger.error('every study need a name')
-                raise AsterClientException
-            if study['name'] in studynames:
-                logger.error('studynames need to be unique, "{0}" isn\'t'.
-                        format(study['name']))
-                raise AsterClientException
-            else:
-                studynames.append(study['name'])
-
-            if not 'meshfile' in study and not 'meshfile' in profile:
-                logger.error('you need to specify a meshfile for each'
-                        ' study')
-                raise AsterClientException
-
-            if set(study.keys()) != studyparams:
-                logger.error('all studies need to have the same keys:'
-                '\n{0}\nare different'.format(studyparams.difference(
-                    set(study.keys()))))
-                raise AsterClientException
-        # check if all keys have values
-        def check_values(dict_):
-            for key in dict_:
-                if type(dict_[key]) == dict:
-                    check_values(dict_[key])
-                # test if value is empty, the following list is allowed to be empty
-                elif dict_[key] == None and key not in ['memory','max_base']:
-                    print >> sys.stderr, ('"{0}" is not valid for'
-                    ' "{1}" in your profile'.format(dict_[key],key))
-                    return False
-            return True
-        if not check_values(profile):
-            sys.exit(1)
-
-
-        # get the calculations which should be run
-        calculations = []
-        if options.calculation:
-            calcnames = [i['name'] for i in profile['calculations']]
-            for x in options.calculation:
-                try:
-                    calculations.append(profile['calculations'][int(x)])
-                except:
-                    try:
-                        calculations.append(profile['calculations'][calcnames.index(x)])
-                    except:
-                        print >> sys.stderr, ('invalid choice "{0}"'
-                        ' for calculation'.format(x))
-        else:
-            # take all if none is specified
-            calculations = profile['calculations']
-        # get the studies which should be run
-        studies_to_run = []
-        if options.study:
-            for x in options.study:
-                try:
-                    studies_to_run.append((int(x),studies[int(x)]))
-                except:
-                    try:
-                        studies_to_run.append((studynames.index(x),
-                            studies[studynames.index(x)]))
-                    except:
-                        print >> sys.stderr, ('invalid choice "{0}"'
-                        ' for study'.format(x))
-        else:
-            # take all if none is specified
-            studies_to_run = [ (i,studies[i]) for i in range(len(studies))]
-        # set up the paths
-        srcdir = os.path.abspath(profile.get('srcdir','.'))
-        builddir = profile.get('workdir',None)
-        outdir = os.path.abspath(profile.get('outdir','results'))
-        # setup the builddir
-        if not builddir:
-            builddir = tempfile.mkdtemp('_asterclient',
-                    profile.get('project','tmp'))
-            atexit.register(shutil.rmtree,builddir)
-        else:
-            builddir = os.path.join(abspath(builddir))
-            try:
-                os.makedirs(builddir)
-            except:
-                if not options.force:
-                    print >> sys.stderr, ('work directory "{0}" exists already,'
-                    'use the --force option to overwrite it anyways'
-                    .format(builddir))
-                    sys.exit(1)
-                else:
-                    # if force option clean up directory
-                    pass
-
-
-        # run the shit
-        sys.path.append(profile['bibpyt'])
-        # symlink cata to Cata/cata
-        try:
-            os.symlink(os.path.join(profile['cata'],'cata.py'),os.path.join(profile['bibpyt'],'Cata','cata.py'))
-        except OSError as e:
-            if e.errno == os.errno.EEXIST:
-                os.remove(os.path.join(profile['bibpyt'],'Cata','cata.py'))
-                os.symlink(os.path.join(profile['cata'],'cata.py'),os.path.join(profile['bibpyt'],'Cata','cata.py'))
-
-        from Execution.E_SUPERV import SUPERV
-        from Execution.E_Core import getargs
-        supervisor = SUPERV()
-
-        processes = []
-
-        if options.sequential:
-            for studynumber,study in studies_to_run:
-                runstudy(**{'calculations':calculations,
-                        'builddir':builddir,'studyname':study['name'],'studynumber':studynumber,
-                        'profile':profile,'outdir':outdir,'srcdir':srcdir,
-                        'distributionfile':distributionfile,
-                        'options':options,'study':study,'foreground':True})
-
-        else:
-            for studynumber,study in studies_to_run:
-                processes.append((study,multiprocessing.Process(target=runstudy,
-                    kwargs={'calculations':calculations,
-                    'builddir':builddir,'studyname':study['name'],'studynumber':studynumber,
-                    'profile':profile,'outdir':outdir,'srcdir':srcdir,
-                    'distributionfile':distributionfile,
-                    'options':options,'study':study})))
-            # start the process stepped
-            counter = 0
-            ncpus = 1 # multiprocessing.cpu_count()
-            #ipdb.set_trace()
-            for i in range(len(processes)):
-                processes[i][1].start()
-                counter += 1
-                if counter == ncpus or counter == len(processes):
-                    time.sleep(0.1)
-                    for j in range(min(len(processes),ncpus)):
-                        #print('trying to join process',j)
-                        processes[j][1].join()
-                    counter = 0
+    asterclient = AsterClient(options)
+    asterclient.run()
 
 if '__main__' == __name__:
     main()
