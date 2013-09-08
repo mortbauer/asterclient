@@ -10,19 +10,6 @@ from parameters import *
 def make_pipe(group,r,s):
     return {'GROUP_MA':group,'SECTION':'CERCLE','CARA':('R','EP'),'VALE':(r,s)}
 
-study = params['name']
-bar_parts = params['bar_parts']
-beam_parts = params['beam_parts']
-boundaries = params['boundaries']
-liaisons = params['liaisons']
-liaisons_solide = params['liaisons_solide']
-forces = params['forces']
-displacement_nodes = params['displacement_nodes']
-study_type = params['study_type']
-
-
-
-
 all_parts = copy(beam_parts)
 all_parts.append('frame')
 

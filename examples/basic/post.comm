@@ -1,4 +1,4 @@
-# bike-frame.comm is a code-aster command file for the study case of a bike frame
+# bike-frame.comm is a code-aster command file for the name case of a bike frame
 # Start
 
 from math import *
@@ -71,7 +71,7 @@ si_principal_max = si_xx.max()
 crit_buckling_loads = [ abs(crit_bu['CHAR_CRIT',i]) for i in range(10)[1:] ]
 min_buckling_ratio = min(crit_buckling_loads)
 
-if 'lenkkopfsteifigkeit' == study:
+if 'lenkkopfsteifigkeit' == name:
     m = MASS['MASSE',1]
     with open('protocol_00_general.rst','w') as f:
         f.write(title('mass'))
@@ -101,7 +101,7 @@ if 'lenkkopfsteifigkeit' == study:
         else:
             f.write('Attention should be between 50 and 115 Nm/°kg\n')
 
-elif 'tretlagersteifigkeit' == study:
+elif 'tretlagersteifigkeit' == name:
     with open('protocol_02_tretlagersteifigkeit.rst','w') as f:
         f.write(title('tretlagersteifigkeit'))
         write_si_vmises_max(f,si_vmises_max)

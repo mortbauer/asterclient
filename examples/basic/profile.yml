@@ -25,7 +25,7 @@ calculations:
     poursuite: "main"
     resultfiles:
       - vmises.table: 40
-      - protocol: "*.rst"
+      - "protocol": "protocol*.rst"
 
 # define different parameter sets for studies
-distributionfile: "distribution"
+distributionfile: "distribution.py"
