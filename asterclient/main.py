@@ -220,7 +220,7 @@ class AsterClient(object):
     def _load_studies(self):
         if 'distributionfile' in self.profile:
             distributionfile = self._abspath(self.profile['distributionfile'])
-            distributionfilename = os.path.splitext(os.path.split(distributionfile)[-1])[0]
+            distributionfilename = os.path.splitext(os.path.basename(distributionfile))[0]
             try:
                 studies = imp.load_source(distributionfilename,distributionfile).parameters
             except Exception as e:
@@ -299,11 +299,11 @@ class AsterClient(object):
                     key = int(x)
                 except:
                     key = None
-                if not key:
+                if key == None:
                     try:
                         key = calcnames.index(x)
                     except:
-                        raise AsterClientException('ther is no calculation "{0}"'.format(x))
+                        raise AsterClientException('there is no calculation "{0}"'.format(x))
                 calculations.append(self.profile['calculations'][key])
         else:
             # take all if none is specified
