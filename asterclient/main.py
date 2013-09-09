@@ -12,17 +12,9 @@ import pkgutil
 import subprocess
 import signal
 import multiprocessing
+import threading
+import collections
 import logging
-#import ipdb
-#import debug
-from .log import MultiProcessingLog
-
-logger = logging.getLogger('asterclient')
-formatter = logging.Formatter('%(name)s: %(levelname)s: %(message)s')
-handler = logging.StreamHandler(sys.stdout)
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.setLevel('INFO')
 
 RUNPY_TEMPLATE = """#!{aster}
 #coding=utf-8
@@ -39,6 +31,8 @@ RUNSH_TEMPLATE = """#!/usr/bin/sh
 export LD_LIBRARY_PATH="{LD_LIBRARY_PATH}:${{LD_LIBRARY_PATH}}"
 exec {runpy}
 """
+
+logger = logging.getLogger('asterclient')
 
 def get_code_aster_error(filename):
     res = []
@@ -76,10 +70,12 @@ def make_pasrer():
             help='work directory for calculation')
     runparser.add_argument('--parallel',action='store_true',
             help='don\'t dispatch but run parallel')
-    runparser.add_argument('--max-parallel',required=False,
+    runparser.add_argument('--max-parallel',required=False,default=10,
             help='limit the number of parallel processes',type=int)
     runparser.add_argument('--hide-aster',action='store_true',
             help='hide the output of code aster')
+    runparser.add_argument('--log-level',default='INFO',
+            help='specify the logging level')
 
     runparser.add_argument('--bibpyt',
         help="path to Code_Aster python source files")
@@ -112,9 +108,45 @@ def make_pasrer():
         help="only prepare everything")
     return parser
 
-def execute_one_study(study):
-    study.run()
+def execute_one(calculations):
+    for calc in calculations:
+        try:
+            calc.run()
+        except KeyboardInterrupt:
+            calc.subprocess.kill()
+            break
 
+
+class Consumer(multiprocessing.Process):
+
+    def __init__(self, task_queue, kill_event,counter,counter_lock):
+        # let us ignore interupts
+        multiprocessing.Process.__init__(self)
+        self.task_queue = task_queue
+        self.kill_event = kill_event
+        self.counter = counter
+        self.counter_lock = counter_lock
+
+    def run(self):
+        proc_name = self.name
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        while True and not self.kill_event.is_set():
+            try:
+                next_task = self.task_queue.get(timeout=4)
+            except:
+                # queue is empty, stop
+                with self.counter_lock:
+                    if self.counter.value == 0:
+                        break
+                    else:
+                        continue
+            logger.info('%s starts: %s' % (proc_name, next_task))
+            answer = next_task(self.kill_event)
+            with self.counter_lock:
+                self.counter.value -= 1
+            for calc in next_task.run_after:
+                self.task_queue.put(calc)
+            logger.info('%s finnished: %s' % (proc_name, next_task))
 
 class AsterClientException(Exception):
     pass
@@ -319,12 +351,23 @@ class AsterClient(object):
         self.workdir = workdir
         self.profile['workdir'] = self.workdir
 
-    def _create_studies(self):
-        studies = []
+    def _create_executions(self):
+        executions = []
+        count = 0
         for study in self.studies_to_run:
-            studies.append(Study(
-                self.config,study,self.calculations_to_run))
-        return studies
+            tmp = {}
+            for calc in self.calculations_to_run:
+                need = calc.get('poursuite')
+                tmp[calc['name']] = Calculation(
+                    '%s:%s'%(study['name'],calc['name']),
+                    self.config,study,calc,need)
+                count += 1
+            for calc in tmp.values():
+                if calc.needs and calc.needs in tmp:
+                    tmp[calc.needs].run_after = calc
+                else:
+                    executions.append(calc)
+        return executions,count
 
     def run(self):
         # do whatever has to be done
@@ -335,21 +378,44 @@ class AsterClient(object):
             self.init()
             self._run()
 
+    def _run_parallel(self):
+        kill_event = multiprocessing.Event()
+        def shutdown(sig,frame):
+            logger.warn('will shutdown all processes, interrupt')
+            kill_event.set()
+        signal.signal(signal.SIGINT,shutdown)
+        #task_queue = collections.deque()
+        task_queue = multiprocessing.Queue()
+        counter_lock = multiprocessing.Lock()
+        counter = multiprocessing.Value('i',(self.num_executions))
+        # Enqueue jobs
+        for calc in self.executions:
+            task_queue.put(calc)
+        # Start consumers
+        consumers = []
+        for i in range(self.options.max_parallel):
+            c = Consumer(task_queue,kill_event,counter,counter_lock)
+            consumers.append(c)
+            c.start()
+        # Wait for all of the tasks to finish
+        task_queue.close()
+
+    def _run_sequential(self,calcs):
+        for calc in calcs:
+            logger.info('start %s' % calc)
+            calc()
+            self._run_sequential(calc.run_after)
+
     def _run(self):
         self.calculations_to_run = self.get_calculations_to_run()
         self.studies_to_run = self.get_studies_to_run()
-        self.executions = self._create_studies()
-        if self.options.parallel:
-            if self.options.max_parallel:
-                self.pool = multiprocessing.Pool(self.options.max_parallel,maxtasksperchild=1)
-            else:
-                self.pool = multiprocessing.Pool(maxtasksperchild=1)
-            self.pool.map(execute_one_study,self.executions)
-            self.pool.close()
-            self.pool.join()
+        self.executions,self.num_executions = self._create_executions()
+        if self.options.parallel and not self.options.prepare:
+            self._run_parallel()
+        elif self.options.parallel and self.options.prepare:
+            raise AsterClientException('parallel preparation not supported')
         else:
-            for study in self.executions:
-                execute_one_study(study)
+            self._run_sequential(self.executions)
 
     def info_studies(self):
         """ print the available studies
@@ -370,13 +436,29 @@ class AsterClient(object):
 class Calculation(object):
     # unfortunately POURSUITE only works in a new process,
     # therefore let us call everything in a knew process
-    def __init__(self,config,study,calculation,previous):
+    def __init__(self,name,config,study,calculation,needs):
         self.config = config
         self.study = study
         self.calculation = calculation
-        # my previous calculation, needed if we resume
-        self.previous = previous
+        # my needs calculation, needed if we resume
+        self.needs = needs
+        self.name = name
         self._initiated = False
+        self._processing = False
+        self.success = False
+        self.finnished = False
+        self._run_after = []
+
+    def __str__(self):
+        return '<Calculation: %s>'%self.name
+
+    @property
+    def run_after(self):
+        return self._run_after
+
+    @run_after.setter
+    def run_after(self,calc):
+        self._run_after.append(calc)
 
     def _prepare_paths(self):
         self.buildpath = os.path.join(
@@ -388,7 +470,7 @@ class Calculation(object):
             os.makedirs(self.buildpath)
         except:
             if self.config.clean:
-                logger.info('cleaning buildpath "{0}"'.format(self.buildpath))
+                logger.debug('cleaning buildpath "{0}"'.format(self.buildpath))
                 shutil.rmtree(self.buildpath)
                 os.makedirs(self.buildpath)
             else:
@@ -398,7 +480,7 @@ class Calculation(object):
             os.makedirs(self.outputpath)
         except:
             if self.config.clean:
-                logger.info('cleaning outputpath "{0}"'.format(self.outputpath))
+                logger.debug('cleaning outputpath "{0}"'.format(self.outputpath))
                 shutil.rmtree(self.outputpath)
                 os.makedirs(self.outputpath)
             else:
@@ -417,23 +499,24 @@ class Calculation(object):
             self.calculation['commandfile'],
             os.path.join(self.buildpath,'fort.1'))
         # if calculation is a continued one copy the results from the
-        if 'poursuite' in self.calculation and self.previous:
+        if 'poursuite' in self.calculation and self.needs:
+            glob1 = os.path.join(self.config['outdir'],self.study['name'],
+                                 self.needs,'glob.1.zip')
+            pick1 = os.path.join(self.config['outdir'],self.study['name'],
+                                 self.needs,'pick.1.zip')
             try:
-                with zipfile.ZipFile(
-                    os.path.join(
-                        self.config['outdir'],self.study['name'],self.previous,'glob.1.zip'),
-                    'r',allowZip64=True) as zipf:
+                logger.debug('try to copy glob.1.zip from %s'%glob1)
+                with zipfile.ZipFile(glob1,'r',allowZip64=True) as zipf:
                     zipf.extractall(path=self.buildpath)
-                with zipfile.ZipFile(
-                    os.path.join(
-                        self.config['outdir'],self.study['name'],self.previous,'pick.1.zip'),
-                    'r',allowZip64=True) as zipf:
+                logger.debug('try to copy pick.1.zip from %s'%pick1)
+                with zipfile.ZipFile(pick1,'r',allowZip64=True) as zipf:
                     zipf.extractall(path=self.buildpath)
-            except:
+            except Exception as e:
                 raise AsterClientException(
-                    'failed to copy glob.1 and pick.1 from "{0}"'.format(self.previous))
+                    'failed to copy glob.1 and pick.1 from "{0}"'.format(self.needs))
 
-    def _create_resultfiles(self):
+
+    def _createresultfiles(self):
         # the resultfiles need already to be created for fortran
         # create a list of files which need to be copied to the
         # resultdirectory
@@ -454,7 +537,7 @@ class Calculation(object):
         if 'inputfiles' in self.calculation:
             for f in self.calculation['inputfiles']:
                 try:
-                    shutil.copyfile(f,os.path.join(self.buildpath,os.path.split(f)[-1]))
+                    shutil.copyfile(f,os.path.join(self.buildpath,os.path.basename(f)))
                 except:
                     logger.error('failed to copy input file "{0}"'.format(f))
 
@@ -503,112 +586,123 @@ class Calculation(object):
             tee = '2&> {0};exit $PIPESTATUS'.format(self.infofile)
         bashscript = '{runsh} {tee}'.format(runsh=self.runsh_path,tee=tee)
         self.subprocess = subprocess.Popen(['bash','-c',bashscript],cwd=self.buildpath)
-        with open(os.path.join(self.buildpath,'asterclient.pid'),'w') as f:
-            f.write(str(self.subprocess.pid))
-        self.subprocess.wait()
-        self.result = self.subprocess.returncode
-
-    def _run_info(self):
-        logger.info('code aster run "{study}:{calculation}" ended: {status}'.
-                format(status = 'OK'if not self.result else 'with Errors',
-                       study = self.study['name'],
-                       calculation = self.calculation['name']))
-        if self.result:
-            logger.info('\n'.join(get_code_aster_error(self.infofile)))
+        wait = True
+        while wait:
+            if self.subprocess.poll() != None:
+                wait = False
+            elif self._kill_event and self._kill_event.is_set():
+                self.subprocess.kill()
+                wait = False
+            else:
+                time.sleep(2)
 
     def init(self):
         if not self._initiated:
             self._prepare_paths()
             self._copy_files()
             self._copy_additional_inputfiles()
-            self._create_resultfiles()
+            self._createresultfiles()
             self._create_runpy()
             self._create_runsh()
             self._initiated = True
 
-    def run(self):
-        if self.config.prepare:
-            self.init()
-            logger.info('cd to "{0}" and run "run.sh" '.format(buildpath))
-        else:
-            self.init()
-            self._run_bashed()
-            self._run_info()
-            self._copy_results()
+    def __call__(self,kill_event=None):
+        self._kill_event = kill_event
+        if not self._processing:
+            try:
+                self._processing = True
+                if self.config.prepare:
+                    self.init()
+                    logger.info('cd to "{0}" and run "run.sh" '.format(self.buildpath))
+                else:
+                    self.init()
+                    self._run_bashed()
+                    self._copyresults()
+                    if self.subprocess.returncode == 0:
+                        self.success = True
+            except:
+                logger.exception('internal error')
+            finally:
+                self._processing = False
+                self.finnished = True
 
-    def _copy_results(self):
+    def _copyresults(self):
         # try to copy results even if errors occured
         for name,fpath in self.resultfiles.items():
             for f in glob.glob(os.path.join(self.buildpath,fpath)):
-                outname = os.path.split(f)[-1]
-                if os.path.getsize(f) == 0:
+                outname = os.path.basename(f)
+                if os.path.getsize(f) == 0 and self.subprocess.returncode == 0:
                     logger.warn('result file "{0}" is empty'.format(outname))
-            self._copy_result(f,os.path.join(self.outputpath,outname))
+            self._copyresult(f,os.path.join(self.outputpath,outname))
+
+        # copy additional inputfiles as well
+        for f in self.calculation.get('inputfiles',[]):
+            self._copyresult(f,
+                os.path.join(self.outputpath,os.path.basename(f)))
 
         # copy the standard result files
-        self._copy_result(
+        self._copyresult(
             os.path.join(self.buildpath,'fort.6'),
             os.path.join(self.outputpath,self.calculation['name']+'.mess')
         )
         # copy the commandfile as well as the parameters and the mesh
-        self._copy_result(
+        self._copyresult(
             os.path.join(self.buildpath,'fort.1'),
-            os.path.join(self.outputpath,self.calculation['commandfile']),
+            os.path.join(self.outputpath,os.path.basename(
+                self.calculation['commandfile'])),
         )
-        self._copy_result(
+        self._copyresult(
             os.path.join(self.buildpath,'fort.20'),
-            os.path.join(self.outputpath,self.config.meshfile),
+            os.path.join(self.outputpath,os.path.basename(
+            self.config.meshfile)),
         )
         if self.config.distributionfile:
-            self._copy_result(
+            self._copyresult(
                 self.config.distributionfile,
-                os.path.join(self.outputpath,
-                             os.path.split(self.config.distributionfile)[-1])
+                os.path.join(self.outputpath,os.path.basename(
+                    self.config.distributionfile))
             )
         # copy the zipped base
-        self._copy_result(
+        self._copyresult(
             os.path.join(self.buildpath,'glob.1'),
             os.path.join(self.outputpath,'glob.1.zip'),zipped=True
         )
-        self._copy_result(
+        self._copyresult(
             os.path.join(self.buildpath,'pick.1'),
             os.path.join(self.outputpath,'pick.1.zip'),zipped=True
         )
 
-    def _copy_result(self,fromfile,tofile,zipped=False):
+    def _copyresult(self,fromfile,tofile,zipped=False):
         try:
             if not zipped:
                 shutil.copyfile(fromfile,tofile)
             else:
                 zipf = zipfile.ZipFile(tofile,'w',allowZip64=True)
-                zipf.write(fromfile,arcname=os.path.split(fromfile)[-1],compress_type=zipfile.ZIP_DEFLATED)
+                zipf.write(fromfile,arcname=os.path.basename(fromfile),
+                           compress_type=zipfile.ZIP_DEFLATED)
                 zipf.close()
-        except OSError as e:
-            if not self.result:
+        except Exception as e:
+            if self.subprocess.returncode == 0:
                 raise e
             else:
-                logger.warn('ignore exception for copiing result "{0}"'
-                            .format(os.path.split(fromfile)[-1]))
-
-class Study(object):
-    def __init__(self,config,study,calculations):
-        self.calculations = []
-        for calc in calculations:
-            self.calculations.append(
-                Calculation(config,study,calc,calc.get('poursuite')))
-    def run(self):
-        for calc in self.calculations:
-            try:
-                calc.run()
-            except KeyboardInterrupt:
-                calc.subprocess.kill()
-                break
+                logger.info('ignore exception for copying result "{0}"'
+                            .format(os.path.basename(fromfile)))
 
 def main(argv=None):
     if not argv:
         argv = sys.argv[1:]
     parser = make_pasrer()
     options = parser.parse_args(argv)
+    formatter = logging.Formatter('%(name)s: %(levelname)s: %(message)s')
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    try:
+        logger.setLevel(options.log_level.upper())
+    except:
+        logger.setLevel('INFO')
+    if options.log_level.upper() == 'DEBUG' and not options.parallel:
+        import debug
     asterclient = AsterClient(options)
     try:
         asterclient.run()
