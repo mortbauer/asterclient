@@ -49,6 +49,8 @@ def get_code_aster_error(filename):
 
 def make_pasrer():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--log-level',default='INFO',
+            help='specify the logging level')
     subparsers = parser.add_subparsers(dest='action')
     infoparser = subparsers.add_parser('info')
     infoparser.add_argument('-p','--profile',required=True,
@@ -74,8 +76,6 @@ def make_pasrer():
             help='limit the number of parallel processes',type=int)
     runparser.add_argument('--hide-aster',action='store_true',
             help='hide the output of code aster')
-    runparser.add_argument('--log-level',default='INFO',
-            help='specify the logging level')
 
     runparser.add_argument('--bibpyt',
         help="path to Code_Aster python source files")
@@ -223,8 +223,8 @@ class AsterClient(object):
             distributionfilename = os.path.splitext(os.path.split(distributionfile)[-1])[0]
             try:
                 studies = imp.load_source(distributionfilename,distributionfile).parameters
-            except:
-                    raise AsterClientException('couldn\'t import distributionfile')
+            except Exception as e:
+                    raise AsterClientException('couldn\'t import distributionfile, %s'%e)
             self.distributionfile = distributionfile
         else:
             studies = [{'name':'main'}]
