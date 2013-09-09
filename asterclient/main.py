@@ -15,6 +15,7 @@ import multiprocessing
 import threading
 import collections
 import logging
+import translator
 
 RUNPY_TEMPLATE = """#!{aster}
 #coding=utf-8
@@ -606,6 +607,14 @@ class Calculation(object):
             self._create_runsh()
             self._initiated = True
 
+    def _run_info(self):
+        if self.subprocess.returncode == 0:
+            logger.info('Code Aster run ended OK')
+        else:
+            error = '\n'.join(get_code_aster_error(self.infofile))
+            error_en = translator.translator_translate(error,'fr','en')
+            logger.warn('Code Aster run ended with ERRORS:\n\n%s'%error_en)
+
     def __call__(self,kill_event=None):
         self._kill_event = kill_event
         if not self._processing:
@@ -617,6 +626,7 @@ class Calculation(object):
                 else:
                     self.init()
                     self._run_bashed()
+                    self._run_info()
                     self._copyresults()
                     if self.subprocess.returncode == 0:
                         self.success = True
