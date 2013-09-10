@@ -14,7 +14,6 @@ import signal
 import multiprocessing
 import threading
 import collections
-import textwrap
 import logging
 import logging.handlers
 import logutils.queue
@@ -172,6 +171,7 @@ class AsterClient(object):
         self.profile = self._load_profile()
         self.basepath = os.path.abspath(self.profile.get('srcdir'))
         self.studies = self._load_studies()
+        self._kill_event = multiprocessing.Event()
 
     def init(self):
         self._sanitize_profile(self.profile)
@@ -187,19 +187,21 @@ class AsterClient(object):
 
     def _load_profile(self):
         # get default profile
-        if not os.environ.get('ASTER_ROOT'):
-            raise AsterClientException(
-                'the ASTER_ROOT environment variable must be set')
-        profile = yaml.load(pkgutil.get_data(
-            __name__,os.path.join('data','defaults.yml')))
+        config = {}
+        user_config = {}
+        exec(open(os.path.join(os.path.dirname(__file__),'data','default.conf')).read(), config)
         # read provided profile
         try:
-            profile.update(yaml.load(self.options.profile.read()))
+            exec(self.options.profile.read(), user_config)
+            config.update(user_config)
         except Exception as e:
             raise AsterClientException(
                 'the profile {0} couldn\'t be parsed:\n\n{1}'
                 .format(self.options.profile.name,e))
-        return profile
+        # remove the profile from the options since a file like object can't be
+        # pickeld
+        del self.options.profile
+        return config
 
     def _sanitize_profile(self,profile):
         # make paths absolute
@@ -379,7 +381,6 @@ class AsterClient(object):
             self._run()
 
     def _run_parallel(self):
-        kill_event = multiprocessing.Event()
         log_queue = queue = multiprocessing.Queue(-1)
         file_formatter = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
         console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
@@ -394,12 +395,6 @@ class AsterClient(object):
             console_handler.setLevel('INFO')
         file_handler.setLevel(logging.DEBUG)
         listener = QueueListener(log_queue, console_handler,file_handler)
-        #listener = logutils.queue.QueueListener(log_queue, console_handler,file_handler)
-        def shutdown(sig,frame):
-            logger.warn('will shutdown all processes, interrupt')
-            kill_event.set()
-        signal.signal(signal.SIGINT,shutdown)
-        #task_queue = collections.deque()
         task_queue = multiprocessing.Queue()
         counter_lock = multiprocessing.Lock()
         counter = multiprocessing.Value('i',(self.num_executions))
@@ -411,7 +406,7 @@ class AsterClient(object):
         # Start consumers
         consumers = []
         for i in range(self.options.max_parallel):
-            c = Consumer(task_queue,kill_event,counter,counter_lock,log_queue,self.options.max_parallel)
+            c = Consumer(task_queue,self._kill_event,counter,counter_lock,log_queue,self.options.max_parallel)
             consumers.append(c)
             c.start()
         # Wait for all of the tasks to finish
@@ -422,13 +417,22 @@ class AsterClient(object):
 
     def _run_sequential(self,calcs):
         for calc in calcs:
+            if self._kill_event.is_set():
+                break
             calc()
             self._run_sequential(calc.run_after)
 
+    def shutdown(self,sig,frame):
+        logger.warn('will shutdown all processes, interrupt')
+        self._kill_event.set()
+
     def _run(self):
+        signal.signal(signal.SIGINT,self.shutdown)
         self.calculations_to_run = self.get_calculations_to_run()
         self.studies_to_run = self.get_studies_to_run()
         self.executions,self.num_executions = self._create_executions()
+        import ipdb
+        ipdb.set_trace()
         if self.options.parallel and not self.options.prepare:
             self._run_parallel()
         elif self.options.parallel and self.options.prepare:
@@ -535,22 +539,20 @@ class Calculation(object):
                 raise AsterClientException(
                     'failed to copy glob.1 and pick.1 from "{0}"'.format(self.needs))
 
-
     def _createresultfiles(self):
         # the resultfiles need already to be created for fortran
         # create a list of files which need to be copied to the
         # resultdirectory
         resultfiles = {}
         if 'resultfiles' in self.calculation:
-            for f in self.calculation['resultfiles']:
-                for key in f:
-                    # result files for acces through fortran
-                    if type(f[key]) == int:
-                        name = 'fort.%s' % f[key]
-                        with open(os.path.join(self.buildpath,name),'w') as f:
-                            resultfiles[key] = name
-                    else:
-                        resultfiles[key] = f[key]
+            for key,f in self.calculation['resultfiles'].items():
+                # result files for acces through fortran
+                if type(f) == int:
+                    name = 'fort.%s' %f
+                    with open(os.path.join(self.buildpath,name),'w') as f:
+                        resultfiles[key] = name
+                else:
+                    resultfiles[key] = f
         self.resultfiles = resultfiles
 
     def _copy_additional_inputfiles(self):
@@ -641,6 +643,8 @@ class Calculation(object):
             handler = logutils.queue.QueueHandler(self._queue)
         else:
             handler = logging.StreamHandler()
+            console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
+            handler.setFormatter(console_formatter)
         self.logger = logging.getLogger(self.name)
         self.logger.addHandler(handler)
         self.logger.setLevel(logging.DEBUG)
@@ -737,7 +741,6 @@ def main(argv=None):
         argv = sys.argv[1:]
     parser = make_pasrer()
     options = parser.parse_args(argv)
-    formatter = logging.Formatter('%(name)s: %(levelname)s: %(message)s')
     console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(console_formatter)
