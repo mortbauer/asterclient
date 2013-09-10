@@ -35,7 +35,7 @@ class Translator(object):
             self._get_result(
                 self._ask_google(
                         self.text[(i+1)*self.CHUNK_SIZE:])))
-        return '\n'.join(self.result)
+        return '\n'.join(self.result).encode('utf-8')
 
 
 
