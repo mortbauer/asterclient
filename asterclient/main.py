@@ -155,12 +155,19 @@ class AsterClientException(Exception):
 class Config(object):
     def __init__(self,asterclient,options):
         for key in asterclient.profile:
-            if not hasattr(self,key):
-                setattr(self,key,asterclient.profile[key])
+            self._set_attr(key,asterclient.profile[key])
+
         doptions = vars(options)
         for key in doptions:
-            if not hasattr(self,key):
-                setattr(self,key,doptions[key])
+            self._set_attr(key,doptions[key])
+
+    def _set_attr(self,attr,value):
+        if not hasattr(self,attr):
+            try:
+                pickle.dumps(value)
+                setattr(self,attr,value)
+            except:
+                pass
 
     def __getitem__(self,key):
         return getattr(self,key)
