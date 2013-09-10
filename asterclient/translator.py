@@ -19,23 +19,17 @@ class Translator(object):
             self.BASE_URL,params=self._get_params(text),headers=self.HEADERS)
         return request.text
 
-    def _get_result(self,html):
-        soup = BeautifulSoup(html)
+    def _get_result(self,text):
+        soup = BeautifulSoup(self._ask_google(text))
         result = soup.find('span', id="result_box")
         return [x.text for x in result.contents]
 
     def get(self):
         self.result = []
-        for i in range(int(len(self.text)/self.CHUNK_SIZE)):
-            self.result.extend(
-                self._get_result(
-                    self._ask_google(
-                        self.text[i*self.CHUNK_SIZE:(i+1)*self.CHUNK_SIZE])))
-        self.result.extend(
-            self._get_result(
-                self._ask_google(
-                        self.text[(i+1)*self.CHUNK_SIZE:])))
-        return '\n'.join(self.result).encode('utf-8')
+        for chunk in (self.text[i:i+self.CHUNK_SIZE]
+                      for i in range(0, len(self.text), self.CHUNK_SIZE)):
+            self.result.extend(self._get_result(chunk))
+        return str('\n'.join(self.result))
 
 
 
