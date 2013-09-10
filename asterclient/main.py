@@ -197,7 +197,7 @@ class AsterClient(object):
             config.update(user_config)
         except Exception as e:
             raise AsterClientException(
-                'the profile {0} couldn\'t be parsed:\n\n{1}'
+                'the profile {0} couldn\'t be parsed:\n\n\t{1}'
                 .format(self.options.profile.name,e))
         # remove the profile from the options since a file like object can't be
         # pickeld
@@ -612,7 +612,7 @@ class Calculation(object):
 
     def _run_bashed(self):
         #signal.signal(signal.SIGINT,self.shutdown)
-        if self.config.parallel and not self.config.hide_aster:
+        if not self.config.hide_aster:
             tee = '| tee {0}; exit $PIPESTATUS'.format(self.infofile)
         else:
             tee = '2&> {0};exit $PIPESTATUS'.format(self.infofile)
