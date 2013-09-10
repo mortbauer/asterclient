@@ -11,9 +11,6 @@ def translator_translate(text,sl,tl):
     request = requests.get('http://www.translate.google.com',params=params,headers=headers)
     feeddata = request.text
     soup = BeautifulSoup(feeddata)
-    try:
-        result = soup.find('span', id="result_box")
-        return '\n'.join([x.get('title') for x in result.contents])
-    except:
-        return('No result found')
+    result = soup.find('span', id="result_box")
+    return '\n'.join([x.text for x in result.contents])
 
