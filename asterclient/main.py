@@ -14,8 +14,11 @@ import signal
 import multiprocessing
 import threading
 import collections
+import textwrap
 import logging
-import translator
+import logging.handlers
+import logutils.queue
+from . import translator
 
 RUNPY_TEMPLATE = """#!{aster}
 #coding=utf-8
@@ -44,8 +47,8 @@ def get_code_aster_error(filename):
                 record = True
             elif line.startswith('>>') and record:
                 record = False
-            elif record:
-                res.append(line)
+            elif record and line.strip():
+                res.append(line.replace('!',''))
     return res
 
 def make_pasrer():
@@ -109,45 +112,42 @@ def make_pasrer():
         help="only prepare everything")
     return parser
 
-def execute_one(calculations):
-    for calc in calculations:
-        try:
-            calc.run()
-        except KeyboardInterrupt:
-            calc.subprocess.kill()
-            break
-
-
 class Consumer(multiprocessing.Process):
 
-    def __init__(self, task_queue, kill_event,counter,counter_lock):
+    def __init__(self, task_queue, kill_event,counter,counter_lock,log_queue,num_consumers):
         # let us ignore interupts
         multiprocessing.Process.__init__(self)
         self.task_queue = task_queue
         self.kill_event = kill_event
         self.counter = counter
         self.counter_lock = counter_lock
+        self.log_queue = log_queue
+        self.num_consumers = num_consumers
 
     def run(self):
         proc_name = self.name
         signal.signal(signal.SIGINT, signal.SIG_IGN)
         while True and not self.kill_event.is_set():
-            try:
-                next_task = self.task_queue.get(timeout=4)
-            except:
-                # queue is empty, stop
-                with self.counter_lock:
-                    if self.counter.value == 0:
-                        break
-                    else:
-                        continue
-            logger.info('%s starts: %s' % (proc_name, next_task))
-            answer = next_task(self.kill_event)
-            with self.counter_lock:
-                self.counter.value -= 1
+            next_task = self.task_queue.get()
+            if not next_task:
+                # None as death pill
+                break
+            answer = next_task(self.kill_event,queue=self.log_queue)
             for calc in next_task.run_after:
                 self.task_queue.put(calc)
-            logger.info('%s finnished: %s' % (proc_name, next_task))
+            with self.counter_lock:
+                self.counter.value -= 1
+                if self.counter.value == 0:
+                    # now we enque the death pills for each consumer
+                    for i in range(self.num_consumers):
+                        self.task_queue.put(None)
+
+class QueueListener(logutils.queue.QueueListener):
+    def handle(self, record):
+        for handler in self.handlers:
+            if record.levelno < handler.level:
+                continue
+            handler.handle(record)
 
 class AsterClientException(Exception):
     pass
@@ -360,7 +360,6 @@ class AsterClient(object):
             for calc in self.calculations_to_run:
                 need = calc.get('poursuite')
                 tmp[calc['name']] = Calculation(
-                    '%s:%s'%(study['name'],calc['name']),
                     self.config,study,calc,need)
                 count += 1
             for calc in tmp.values():
@@ -381,6 +380,21 @@ class AsterClient(object):
 
     def _run_parallel(self):
         kill_event = multiprocessing.Event()
+        log_queue = queue = multiprocessing.Queue(-1)
+        file_formatter = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
+        console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
+        console_handler = logging.StreamHandler(sys.stdout)
+        file_handler = logging.FileHandler('logs/mptest.log', 'a')
+        file_handler.setFormatter(file_formatter)
+        console_handler.setFormatter(console_formatter)
+        try:
+            console_handler.setLevel(self.options.log_level.upper())
+        except:
+            logger.error('"{0}" is no correct log level'.format(self.options.log_level.upper()))
+            console_handler.setLevel('INFO')
+        file_handler.setLevel(logging.DEBUG)
+        listener = QueueListener(log_queue, console_handler,file_handler)
+        #listener = logutils.queue.QueueListener(log_queue, console_handler,file_handler)
         def shutdown(sig,frame):
             logger.warn('will shutdown all processes, interrupt')
             kill_event.set()
@@ -392,18 +406,22 @@ class AsterClient(object):
         # Enqueue jobs
         for calc in self.executions:
             task_queue.put(calc)
+        # start the log listener
+        listener.start()
         # Start consumers
         consumers = []
         for i in range(self.options.max_parallel):
-            c = Consumer(task_queue,kill_event,counter,counter_lock)
+            c = Consumer(task_queue,kill_event,counter,counter_lock,log_queue,self.options.max_parallel)
             consumers.append(c)
             c.start()
         # Wait for all of the tasks to finish
-        task_queue.close()
+        for c in consumers:
+            c.join()
+        # now also close the log listener
+        listener.stop()
 
     def _run_sequential(self,calcs):
         for calc in calcs:
-            logger.info('start %s' % calc)
             calc()
             self._run_sequential(calc.run_after)
 
@@ -437,18 +455,19 @@ class AsterClient(object):
 class Calculation(object):
     # unfortunately POURSUITE only works in a new process,
     # therefore let us call everything in a knew process
-    def __init__(self,name,config,study,calculation,needs):
+    def __init__(self,config,study,calculation,needs):
         self.config = config
         self.study = study
         self.calculation = calculation
         # my needs calculation, needed if we resume
         self.needs = needs
-        self.name = name
+        self.name = '{0}:{1}'.format(study['name'],calculation['name'])
         self._initiated = False
         self._processing = False
         self.success = False
         self.finnished = False
         self._run_after = []
+        self._killed = None
 
     def __str__(self):
         return '<Calculation: %s>'%self.name
@@ -471,21 +490,21 @@ class Calculation(object):
             os.makedirs(self.buildpath)
         except:
             if self.config.clean:
-                logger.debug('cleaning buildpath "{0}"'.format(self.buildpath))
+                self.logger.debug('cleaning buildpath "{0}"'.format(self.buildpath))
                 shutil.rmtree(self.buildpath)
                 os.makedirs(self.buildpath)
             else:
-                logger.warn('buildpath "{0}" exists and holds data'.format(self.buildpath))
+                self.logger.warn('buildpath "{0}" exists and holds data'.format(self.buildpath))
         # make sure output directory exists and is clean
         try:
             os.makedirs(self.outputpath)
         except:
             if self.config.clean:
-                logger.debug('cleaning outputpath "{0}"'.format(self.outputpath))
+                self.logger.debug('cleaning outputpath "{0}"'.format(self.outputpath))
                 shutil.rmtree(self.outputpath)
                 os.makedirs(self.outputpath)
             else:
-                logger.warn('outputpath "{0}" exists and holds data'.format(self.outputpath))
+                self.logger.warn('outputpath "{0}" exists and holds data'.format(self.outputpath))
         self.infofile = os.path.join(self.buildpath,'fort.6')
 
     def _copy_files(self):
@@ -506,10 +525,10 @@ class Calculation(object):
             pick1 = os.path.join(self.config['outdir'],self.study['name'],
                                  self.needs,'pick.1.zip')
             try:
-                logger.debug('try to copy glob.1.zip from %s'%glob1)
+                self.logger.debug('try to copy glob.1.zip from %s'%glob1)
                 with zipfile.ZipFile(glob1,'r',allowZip64=True) as zipf:
                     zipf.extractall(path=self.buildpath)
-                logger.debug('try to copy pick.1.zip from %s'%pick1)
+                self.logger.debug('try to copy pick.1.zip from %s'%pick1)
                 with zipfile.ZipFile(pick1,'r',allowZip64=True) as zipf:
                     zipf.extractall(path=self.buildpath)
             except Exception as e:
@@ -540,7 +559,7 @@ class Calculation(object):
                 try:
                     shutil.copyfile(f,os.path.join(self.buildpath,os.path.basename(f)))
                 except:
-                    logger.error('failed to copy input file "{0}"'.format(f))
+                    self.logger.error('failed to copy input file "{0}"'.format(f))
 
     def _create_runpy(self):
         arguments = ['supervisor',
@@ -569,7 +588,7 @@ class Calculation(object):
         self.runpy_path = os.path.join(self.buildpath,'run.py')
         with open(self.runpy_path,'w') as f:
             f.write(runpy)
-        os.chmod(self.runpy_path,0777)
+        os.chmod(self.runpy_path,0o777)
 
     def _create_runsh(self):
         runsh = RUNSH_TEMPLATE.format(LD_LIBRARY_PATH=self.buildpath,runpy=self.runpy_path)
@@ -577,7 +596,7 @@ class Calculation(object):
         self.runsh_path = os.path.join(self.buildpath,'run.sh')
         with open(self.runsh_path,'w') as f:
             f.write(runsh)
-        os.chmod(self.runsh_path,0777)
+        os.chmod(self.runsh_path,0o777)
 
     def _run_bashed(self):
         #signal.signal(signal.SIGINT,self.shutdown)
@@ -594,6 +613,7 @@ class Calculation(object):
             elif self._kill_event and self._kill_event.is_set():
                 self.subprocess.kill()
                 wait = False
+                self._killed = True
             else:
                 time.sleep(2)
 
@@ -609,20 +629,33 @@ class Calculation(object):
 
     def _run_info(self):
         if self.subprocess.returncode == 0:
-            logger.info('Code Aster run ended OK')
-        else:
+            self.logger.info('Code Aster run ended OK')
+        elif not self._killed:
             error = '\n'.join(get_code_aster_error(self.infofile))
             error_en = translator.translator_translate(error,'fr','en')
-            logger.warn('Code Aster run ended with ERRORS:\n\n%s'%error_en)
+            self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
+                             .format('\n\t'.join(error_en.splitlines())))
 
-    def __call__(self,kill_event=None):
+    def _set_logger(self):
+        if self._queue:
+            handler = logutils.queue.QueueHandler(self._queue)
+        else:
+            handler = logging.StreamHandler()
+        self.logger = logging.getLogger(self.name)
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.DEBUG)
+
+    def __call__(self,kill_event=None,queue=None):
+        self._queue = queue
+        self._set_logger()
         self._kill_event = kill_event
         if not self._processing:
+            self.logger.info('started processing')
             try:
                 self._processing = True
                 if self.config.prepare:
                     self.init()
-                    logger.info('cd to "{0}" and run "run.sh" '.format(self.buildpath))
+                    self.logger.info('cd to "{0}" and run "run.sh" '.format(self.buildpath))
                 else:
                     self.init()
                     self._run_bashed()
@@ -631,10 +664,11 @@ class Calculation(object):
                     if self.subprocess.returncode == 0:
                         self.success = True
             except:
-                logger.exception('internal error')
+                self.logger.exception('internal error')
             finally:
                 self._processing = False
                 self.finnished = True
+            self.logger.info('finnished processing')
 
     def _copyresults(self):
         # try to copy results even if errors occured
@@ -642,7 +676,7 @@ class Calculation(object):
             for f in glob.glob(os.path.join(self.buildpath,fpath)):
                 outname = os.path.basename(f)
                 if os.path.getsize(f) == 0 and self.subprocess.returncode == 0:
-                    logger.warn('result file "{0}" is empty'.format(outname))
+                    self.logger.warn('result file "{0}" is empty'.format(outname))
             self._copyresult(f,os.path.join(self.outputpath,outname))
 
         # copy additional inputfiles as well
@@ -695,7 +729,7 @@ class Calculation(object):
             if self.subprocess.returncode == 0:
                 raise e
             else:
-                logger.info('ignore exception for copying result "{0}"'
+                self.logger.debug('ignore exception for copying result "{0}"'
                             .format(os.path.basename(fromfile)))
 
 def main(argv=None):
@@ -704,8 +738,9 @@ def main(argv=None):
     parser = make_pasrer()
     options = parser.parse_args(argv)
     formatter = logging.Formatter('%(name)s: %(levelname)s: %(message)s')
+    console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter)
+    handler.setFormatter(console_formatter)
     logger.addHandler(handler)
     try:
         logger.setLevel(options.log_level.upper())
@@ -717,7 +752,8 @@ def main(argv=None):
     try:
         asterclient.run()
     except KeyboardInterrupt:
-        logger.error('killed all calculations through interrupt')
+        pass
+        #logger.error('killed all calculations through interrupt')
 
 if '__main__' == __name__:
     main()
