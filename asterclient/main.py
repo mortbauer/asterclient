@@ -2,18 +2,16 @@ import os
 import sys
 import zipfile
 import shutil
-import yaml
 import time
 import glob
 import imp
+import pickle
 import tempfile
 import argparse
-import pkgutil
 import subprocess
 import signal
 import multiprocessing
 import threading
-import collections
 import logging
 import logging.handlers
 import logutils.queue
@@ -200,8 +198,14 @@ class AsterClient(object):
                 .format(self.options.profile.name,e))
         # remove the profile from the options since a file like object can't be
         # pickeld
-        del self.options.profile
-        return config
+        pickableconfig = {}
+        for key,value in config.items():
+            try:
+                pickle.dumps(value)
+                pickableconfig[key] = value
+            except:
+                pass
+        return pickableconfig
 
     def _sanitize_profile(self,profile):
         # make paths absolute
@@ -382,8 +386,10 @@ class AsterClient(object):
 
     def _run_parallel(self):
         log_queue = queue = multiprocessing.Queue(-1)
-        file_formatter = logging.Formatter('%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
-        console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
+        file_formatter = logging.Formatter(
+            '%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
+        console_formatter = logging.Formatter(
+            '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
         console_handler = logging.StreamHandler(sys.stdout)
         file_handler = logging.FileHandler('logs/mptest.log', 'a')
         file_handler.setFormatter(file_formatter)
@@ -391,13 +397,15 @@ class AsterClient(object):
         try:
             console_handler.setLevel(self.options.log_level.upper())
         except:
-            logger.error('"{0}" is no correct log level'.format(self.options.log_level.upper()))
+            logger.error('"{0}" is no correct log level'.
+                         format(self.options.log_level.upper()))
             console_handler.setLevel('INFO')
         file_handler.setLevel(logging.DEBUG)
         listener = QueueListener(log_queue, console_handler,file_handler)
         task_queue = multiprocessing.Queue()
         counter_lock = multiprocessing.Lock()
         counter = multiprocessing.Value('i',(self.num_executions))
+        num_consumers = min((self.options.max_parallel,self.num_executions))
         # Enqueue jobs
         for calc in self.executions:
             task_queue.put(calc)
@@ -405,8 +413,9 @@ class AsterClient(object):
         listener.start()
         # Start consumers
         consumers = []
-        for i in range(self.options.max_parallel):
-            c = Consumer(task_queue,self._kill_event,counter,counter_lock,log_queue,self.options.max_parallel)
+        for i in range(num_consumers):
+            c = Consumer(task_queue,self._kill_event,
+                         counter,counter_lock,log_queue,num_consumers)
             consumers.append(c)
             c.start()
         # Wait for all of the tasks to finish
@@ -431,8 +440,6 @@ class AsterClient(object):
         self.calculations_to_run = self.get_calculations_to_run()
         self.studies_to_run = self.get_studies_to_run()
         self.executions,self.num_executions = self._create_executions()
-        import ipdb
-        ipdb.set_trace()
         if self.options.parallel and not self.options.prepare:
             self._run_parallel()
         elif self.options.parallel and self.options.prepare:
