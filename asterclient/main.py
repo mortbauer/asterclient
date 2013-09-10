@@ -77,6 +77,8 @@ def make_pasrer():
             help='limit the number of parallel processes',type=int)
     runparser.add_argument('--hide-aster',action='store_true',
             help='hide the output of code aster')
+    runparser.add_argument('--logfile',
+            help='path of the used logfile')
 
     runparser.add_argument('--bibpyt',
         help="path to Code_Aster python source files")
@@ -391,7 +393,7 @@ class AsterClient(object):
         console_formatter = logging.Formatter(
             '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
         console_handler = logging.StreamHandler(sys.stdout)
-        file_handler = logging.FileHandler('logs/mptest.log', 'a')
+        file_handler = logging.FileHandler(self.config.logfile, 'a')
         file_handler.setFormatter(file_formatter)
         console_handler.setFormatter(console_formatter)
         try:
