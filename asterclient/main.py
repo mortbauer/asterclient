@@ -126,17 +126,18 @@ class Consumer(multiprocessing.Process):
     def run(self):
         proc_name = self.name
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-        while True and not self.kill_event.is_set():
+        while not self.kill_event.is_set():
             next_task = self.task_queue.get()
             if not next_task:
                 # None as death pill
                 break
             answer = next_task(self.kill_event,queue=self.log_queue)
-            for calc in next_task.run_after:
-                self.task_queue.put(calc)
+            if not self.kill_event.is_set():
+                for calc in next_task.run_after:
+                    self.task_queue.put(calc)
             with self.counter_lock:
                 self.counter.value -= 1
-                if self.counter.value == 0:
+                if self.counter.value == 0 or self.kill_event.is_set():
                     # now we enque the death pills for each consumer
                     for i in range(self.num_consumers):
                         self.task_queue.put(None)
@@ -430,7 +431,7 @@ class AsterClient(object):
         for calc in calcs:
             if self._kill_event.is_set():
                 break
-            calc()
+            calc(kill_event=self._kill_event)
             self._run_sequential(calc.run_after)
 
     def shutdown(self,sig,frame):
