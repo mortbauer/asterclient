@@ -268,6 +268,8 @@ class AsterClient(object):
 
         # check if all studies have the same keys
         if len(study_keys) > 1:
+            for study in self.studies:
+                print('study %s: %s'%(study['name'],study.keys()))
             raise AsterClientException('all studies need to have the same keys')
 
     def _sanitize_calculation_options(self,calculation):
@@ -653,7 +655,7 @@ class Calculation(object):
             error = '\n'.join(get_code_aster_error(self.infofile))
             error_en = translator.Translator(error,'fr','en').get()
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
-                             .format('\n\t'.join(error_en.splitlines())))
+                             .format('\n\t'.join(error_en.splitlines())).encode('utf-8'))
 
     def _set_logger(self):
         if self._queue:

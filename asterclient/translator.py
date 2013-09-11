@@ -29,7 +29,7 @@ class Translator(object):
         for chunk in (self.text[i:i+self.CHUNK_SIZE]
                       for i in range(0, len(self.text), self.CHUNK_SIZE)):
             self.result.extend(self._get_result(chunk))
-        return str('\n'.join(self.result))
+        return '\n'.join(self.result)
 
 
 
