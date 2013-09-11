@@ -17,7 +17,7 @@ class Translator(object):
     def _ask_google(self,text):
         request = requests.get(
             self.BASE_URL,params=self._get_params(text),headers=self.HEADERS)
-        return request.text
+        return request.content
 
     def _get_result(self,text):
         soup = BeautifulSoup(self._ask_google(text))
@@ -29,7 +29,6 @@ class Translator(object):
         for chunk in (self.text[i:i+self.CHUNK_SIZE]
                       for i in range(0, len(self.text), self.CHUNK_SIZE)):
             self.result.extend(self._get_result(chunk))
-        return '\n'.join(self.result)
-
+        return result
 
 
