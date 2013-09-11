@@ -10,6 +10,7 @@ class Translator(object):
         self.sl = sl
         self.tl =tl
         self.text = text
+        self.result = None
 
     def _get_params(self,text):
         return {'sl':self.sl,'tl':self.tl,'text':text}
@@ -25,10 +26,12 @@ class Translator(object):
         return [x.text for x in result.contents]
 
     def get(self):
-        self.result = []
-        for chunk in (self.text[i:i+self.CHUNK_SIZE]
-                      for i in range(0, len(self.text), self.CHUNK_SIZE)):
-            self.result.extend(self._get_result(chunk))
-        return result
+        if not self.result:
+            result = []
+            for chunk in (self.text[i:i+self.CHUNK_SIZE]
+                        for i in range(0, len(self.text), self.CHUNK_SIZE)):
+                result.extend(self._get_result(chunk))
+            self.result = result
+        return self.result
 
 
