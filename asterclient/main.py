@@ -655,7 +655,7 @@ class Calculation(object):
             error = '\n'.join(get_code_aster_error(self.infofile))
             error_en = translator.Translator(error,'fr','en').get()
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
-                             .format('\n\t'.join(error_en.splitlines())).encode('utf-8'))
+                             .format('\n\t'.join(error_en.splitlines())))
 
     def _set_logger(self):
         if self._queue:
