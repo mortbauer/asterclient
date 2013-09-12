@@ -180,6 +180,7 @@ class AsterClient(object):
         self.basepath = os.path.abspath(self.profile.get('srcdir'))
         self.studies = self._load_studies()
         self._kill_event = multiprocessing.Event()
+        signal.signal(signal.SIGINT,self.shutdown)
 
     def init(self):
         self._sanitize_profile(self.profile)
@@ -448,7 +449,6 @@ class AsterClient(object):
         self._kill_event.set()
 
     def _run(self):
-        signal.signal(signal.SIGINT,self.shutdown)
         self.calculations_to_run = self.get_calculations_to_run()
         self.studies_to_run = self.get_studies_to_run()
         self.executions,self.num_executions = self._create_executions()
