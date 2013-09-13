@@ -2,3 +2,4 @@ argparse>=1.2
 beautifulsoup4
 requests
 logutils
+-e git+https://github.com/mortbauer/configreader.git#egg=configreader
