@@ -2,6 +2,8 @@ import os
 import sys
 import zipfile
 import shutil
+import copy
+import config
 import time
 import glob
 import imp
@@ -15,6 +17,7 @@ import threading
 import logging
 import logging.handlers
 import logutils.queue
+import configreader
 from . import translator
 
 RUNPY_TEMPLATE = """#!{aster}
@@ -33,8 +36,6 @@ export LD_LIBRARY_PATH="{LD_LIBRARY_PATH}:${{LD_LIBRARY_PATH}}"
 exec {runpy}
 """
 
-logger = logging.getLogger('asterclient')
-
 def get_code_aster_error(filename):
     res = []
     record = False
@@ -47,69 +48,6 @@ def get_code_aster_error(filename):
             elif record and line.strip():
                 res.append(line.replace('!',''))
     return res
-
-def make_pasrer():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--log-level',default='INFO',
-            help='specify the logging level')
-    subparsers = parser.add_subparsers(dest='action')
-    infoparser = subparsers.add_parser('info')
-    infoparser.add_argument('-p','--profile',required=True,
-            help='specify profile file',type=argparse.FileType('r'))
-    infoparser.add_argument('--studies',action='store_true',
-            help='list the available studies of the profile')
-    infoparser.add_argument('--calculations',action='store_true',
-            help='list the available calculations of the profile')
-    runparser = subparsers.add_parser('run')
-    runparser.add_argument('-p','--profile',required=True,
-            help='specify profile file',type=argparse.FileType('r'))
-    runparser.add_argument('-s','--study',nargs='*',
-            help='run the these studies')
-    runparser.add_argument('-c','--calculation',nargs='*',
-            help='run the these calculations')
-    runparser.add_argument('--clean',action='store_true',
-            help='cleans existing workdir and resultdir')
-    runparser.add_argument('--workdir',
-            help='work directory for calculation')
-    runparser.add_argument('--parallel',action='store_true',
-            help='don\'t dispatch but run parallel')
-    runparser.add_argument('--max-parallel',required=False,default=10,
-            help='limit the number of parallel processes',type=int)
-    runparser.add_argument('--hide-aster',action='store_true',
-            help='hide the output of code aster')
-    runparser.add_argument('--logfile',
-            help='path of the used logfile')
-
-    runparser.add_argument('--bibpyt',
-        help="path to Code_Aster python source files")
-    runparser.add_argument('--memjeveux',
-        help="maximum size of the memory taken by the execution (in Mw)")
-    runparser.add_argument('--memory',
-        help="maximum size of the memory taken by the execution (in MB)")
-    runparser.add_argument('--tpmax',
-        help="limit of the time of the execution (in seconds)")
-    runparser.add_argument('--max_base',
-        help="limit of the size of the results database")
-    runparser.add_argument('--dbgjeveux',action='store_true',
-        help="maximum size of the memory taken by the execution in Mw")
-    runparser.add_argument('--mode',
-        help="execution mode (interactive or batch)")
-    runparser.add_argument('--interact', action='store_true', default=False,
-        help="as 'python -i' works, it allows to enter commands after the "
-                "execution of the command file.")
-    runparser.add_argument('--rep_outils',
-        help="directory of Code_Aster tools (ex. $ASTER_ROOT/outils)")
-    runparser.add_argument('--rep_mat',
-        help="directory of materials properties")
-    runparser.add_argument('--rep_dex',
-        help="directory of external datas (geometrical datas or properties...)")
-    runparser.add_argument('--suivi_batch',action='store_true',default=True,
-        help="force to flush of the output after each line")
-    runparser.add_argument('--verif', action='store_true', default=False,
-        help="only check the syntax of the command file is done")
-    runparser.add_argument('--prepare', action='store_true', default=False,
-        help="only prepare everything")
-    return parser
 
 class Consumer(multiprocessing.Process):
 
@@ -152,41 +90,207 @@ class QueueListener(logutils.queue.QueueListener):
 class AsterClientException(Exception):
     pass
 
-class Config(object):
-    def __init__(self,asterclient,options):
-        for key in asterclient.profile:
-            self._set_attr(key,asterclient.profile[key])
+class Parser(object):
+    def __init__(self,argv):
+        self.argv = argv
+        self._preparser = None
+        self._preoptions = None
+        self._options = None
+        self._defaultprofile = None
+        self._profile = None
+        self._asterparser = None
+        self._clientparser = None
+        self._parser = None
 
-        doptions = vars(options)
-        for key in doptions:
-            self._set_attr(key,doptions[key])
+    @property
+    def preparser(self):
+        if not self._preparser:
+            # parser for the global options
+            preparser = argparse.ArgumentParser(add_help=False)
+            preparser.add_argument('--log-level',default='INFO',
+                    help='specify the logging level')
+            preparser.add_argument('--logfile',
+                    help='path of the used logfile')
+            preparser.add_argument('-p','--profile',
+                    help='specify profile file')
+            self._preparser = preparser
+        return self._preparser
 
-    def _set_attr(self,attr,value):
-        if not hasattr(self,attr):
+    @property
+    def asterparser(self):
+        if not self._asterparser:
+            asterparser = argparse.ArgumentParser(add_help=False)
+            asterparser.add_argument('--bibpyt',
+                help="path to Code_Aster python source files")
+            asterparser.add_argument('--memjeveux',type=int,
+                help="maximum size of the memory taken by the execution (in Mw)")
+            asterparser.add_argument('--memory',type=int,
+                help="maximum size of the memory taken by the execution (in MB)")
+            asterparser.add_argument('--tpmax',type=int,
+                help="limit of the time of the execution (in seconds)")
+            asterparser.add_argument('--max_base',type=int,
+                help="limit of the size of the results database")
+            asterparser.add_argument('--dbgjeveux',action='store_true',
+                help="maximum size of the memory taken by the execution in Mw")
+            asterparser.add_argument('--mode',type=str,
+                help="execution mode (interactive or batch)")
+            asterparser.add_argument('--interact', action='store_true', default=False,
+                help="as 'python -i' works, it allows to enter commands after the "
+                        "execution of the command file.")
+            asterparser.add_argument('--rep_outils',
+                help="directory of Code_Aster tools (ex. $ASTER_ROOT/outils)")
+            asterparser.add_argument('--rep_mat',
+                help="directory of materials properties")
+            asterparser.add_argument('--rep_dex',
+                help="directory of external datas (geometrical datas or properties...)")
+            asterparser.add_argument('--suivi_batch',action='store_true',default=True,
+                help="force to flush of the output after each line")
+            asterparser.add_argument('--verif', action='store_true', default=False,
+                help="only check the syntax of the command file is done")
+            # set defaults from profile
+            self._asterparser = asterparser
+        return self._asterparser
+
+    @property
+    def clientparser(self):
+        if not self._clientparser:
+            clientparser = argparse.ArgumentParser(add_help=False)
+            clientparser.add_argument('-s','--study',nargs='*',
+                    help='run the these studies')
+            clientparser.add_argument('-c','--calculation',nargs='*',
+                    help='run the these calculations')
+            clientparser.add_argument('--clean',action='store_true',
+                    help='cleans existing workdir and resultdir')
+            clientparser.set_defaults(**self.profile)
+            self._clientparser = clientparser
+        return self._clientparser
+
+    @property
+    def parser(self):
+        if not self._parser:
+            parser = argparse.ArgumentParser(parents=[self.preparser])
+            subparsers = parser.add_subparsers(dest='action')
+            info = subparsers.add_parser('info')
+            run = subparsers.add_parser('run',
+                parents=[self.preparser,self.asterparser,self.clientparser])
+            run.add_argument('--parallel',action='store_true',
+                    help='don\'t dispatch but run parallel')
+            run.add_argument('--max-parallel',required=False,default=10,
+                    help='limit the number of parallel processes',type=int)
+            run.add_argument('--hide-aster',action='store_true',
+                    help='hide the output of code aster')
+            run.add_argument('--dispatch',action='store_true',
+                    help='start the calculation but doesn\'t wait for it to finnish')
+            run.set_defaults(**self.profile)
+            copyresult = subparsers.add_parser('copyresult',
+                parents=[self.preparser,self.clientparser],
+                help='copies the results to the result folder, useful if'
+                    'calculation was dispatched or run by hand')
+            copyresult.set_defaults(**self.profile)
+            prepare = subparsers.add_parser('prepare',
+                parents=[self.preparser,self.clientparser],
+                help="only prepare everything")
+            prepare.set_defaults(**self.profile)
+            self._parser = parser
+        return self._parser
+
+    @property
+    def options(self):
+        if not self._options:
+            self._options = vars(self.parser.parse_args(self.argv))
+        return self._options
+
+    @property
+    def preoptions(self):
+        if not self._preoptions:
+            self._preoptions = self.preparser.parse_known_args(self.argv)[0]
+        return self._preoptions
+
+    @property
+    def defaultprofile(self):
+        if not self._defaultprofile:
+            path = os.path.join(os.path.dirname(__file__),'data','default.conf')
+            with open(path,'r') as f:
+                self._defaultprofile = configreader.Config(
+                    f,namespace={'os.getenv':os.getenv})
+        return self._defaultprofile
+
+    @property
+    def profile(self):
+        if not self._profile:
+            profile = copy.copy(self.defaultprofile)
             try:
-                pickle.dumps(value)
-                setattr(self,attr,value)
-            except:
-                pass
-
-    def __getitem__(self,key):
-        return getattr(self,key)
+                with open(self.preoptions.profile,'r') as f:
+                    profile.update(configreader.Config(
+                        f,namespace={'os.getenv':os.getenv}))
+            except Exception as e:
+                raise AsterClientException(
+                    'the profile {0} couldn\'t be parsed:\n\n\t{1}'
+                    .format(self.preoptions.profile,e))
+            self._profile = profile
+        return self._profile
 
 class AsterClient(object):
-    def __init__(self,options):
+    def __init__(self,options,logger=None):
         self.options = options
+        self.basepath = os.path.abspath(options.get('srcdir'))
+        self.logger = logger
+        self._set_logger()
+        self._studies_to_run = None
+        self._calculations_to_run = None
+        self._executions_nested = None
+        self._executions_flat = None
+        self._num_executions = None
+        self._distributionfile = -1
         self._remove_at_exit = []
-        self.profile = self._load_profile()
-        self.basepath = os.path.abspath(self.profile.get('srcdir'))
-        self.studies = self._load_studies()
+        self._studies = None
+        self._calculations = None
+        self._initiated = False
         self._kill_event = multiprocessing.Event()
         signal.signal(signal.SIGINT,self.shutdown)
 
-    def init(self):
-        self._sanitize_profile(self.profile)
-        self._prepare_paths_for_run()
-        self._check_settings()
-        self.config = Config(self,self.options)
+    def _absolutize_option_paths(self):
+        for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
+            self.options[pathkey] = os.path.join(self.options['aster_root'],
+                self.options['version'],self.options[pathkey])
+        if not os.path.isabs(self.options['rep_outils']):
+            self.options['rep_outils'] = os.path.join(
+                self.options['aster_root'],self.options['rep_outils'])
+
+    def _set_logger(self):
+        if not self.logger:
+            logger = logging.getLogger('asterclient')
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_formatter = logging.Formatter(
+            '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
+            console_handler.setFormatter(console_formatter)
+            if self.options["logfile"]:
+                file_handler = logging.FileHandler(self.options["logfile"], 'a')
+                file_formatter = logging.Formatter(
+                    '%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
+                file_handler.setFormatter(file_formatter)
+            else:
+                file_handler = None
+            try:
+                logger.setLevel(self.options["log_level"])
+                console_handler.setLevel(self.options["log_level"])
+                if file_handler:
+                    file_handler.setLevel(self.options["log_level"])
+            except:
+                logger.setLevel('INFO')
+                console_handler.setLevel('INFO')
+                if file_handler:
+                    file_handler.setLevel('INFO')
+            if file_handler:
+                logger.addHandler(file_handler)
+            logger.addHandler(console_handler)
+            self.logger = logger
+
+    def _init(self):
+        if not self._initiated:
+            self._absolutize_option_paths()
+            self._prepare_paths_for_run()
+            self._initiated = True
 
     def _abspath(self,path):
         if os.path.isabs(path):
@@ -194,173 +298,168 @@ class AsterClient(object):
         else:
             return os.path.abspath(os.path.join(self.basepath,path))
 
-    def _load_profile(self):
-        # get default profile
-        config = {}
-        user_config = {}
-        exec(open(os.path.join(os.path.dirname(__file__),'data','default.conf')).read(), config)
-        # read provided profile
-        try:
-            exec(self.options.profile.read(), user_config)
-            config.update(user_config)
-        except Exception as e:
-            raise AsterClientException(
-                'the profile {0} couldn\'t be parsed:\n\n\t{1}'
-                .format(self.options.profile.name,e))
-        # remove the profile from the options since a file like object can't be
-        # pickeld
-        pickableconfig = {}
-        for key,value in config.items():
-            try:
-                pickle.dumps(value)
-                pickableconfig[key] = value
-            except:
-                pass
-        return pickableconfig
+    @property
+    def calculations(self):
+        if not self._calculations:
+            self._calculations = self._load_calculations()
+        return self._calculations
 
-    def _sanitize_profile(self,profile):
-        # make paths absolute
-        for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
-            profile[pathkey] = os.path.join(
-                profile['aster_root'],profile['version'],profile[pathkey])
-        if not os.path.isabs(profile['rep_outils']):
-            profile['rep_outils'] = os.path.join(
-                profile['aster_root'],profile['rep_outils'])
-        # populate the commandline options into the profile
-        for key in ['bibpyt','memjeveux','memory','tpmax','max_base',
-                'dbgjeveux','mode','interact','rep_outils','rep_mat',
-                'rep_dex','suivi_batch','verif','workdir']:
-            if getattr(self.options,key) != None:
-                profile[key] = getattr(self.options,key)
-        # create a named bound for the calculations
-        self.calculations = {calc['name']:calc for calc in self.profile['calculations']}
+    def _load_calculations(self):
+        # test calculations specified in the profile
+        calcs = {}
+        for i,calc in enumerate(self.options['calculations']):
+            calc['number'] = i # so we can keep the order
+            name = calc.get('name','')
+            if not name:
+                raise AsterClientException('no calcualtion name specified')
+            if name in calcs:
+                raise AsterClientException('calculation name {0} isn\'t unique'
+                                        .format(name))
+
+            commandfile = calc.get('commandfile','')
+            if not commandfile:
+                raise AsterClientException('no commandfile specified for "{0}"'
+                                       .format(name))
+            calc['commandfile'] = self._abspath(commandfile)
+            if 'inputfiles' in calc:
+                for i,fpath in enumerate(calc['inputfiles']):
+                    calc['inputfiles'][i] = self._abspath(fpath)
+            calcs[name] = calc
+
+    @property
+    def distributionfile(self):
+        if self._distributionfile == -1:
+            if 'distributionfile' in self.options:
+                distr = self._abspath(self.options["distributionfile"])
+            else:
+                studies = [{'name':'main'}]
+                distr = None
+            self._distributionfile = distr
+            self.options["distributionfile"] = distr
+        return self._distributionfile
+
+    @property
+    def studies(self):
+        if not self._studies:
+            self._studies = self._load_studies()
+        return self._studies
 
     def _load_studies(self):
-        if 'distributionfile' in self.profile:
-            distributionfile = self._abspath(self.profile['distributionfile'])
-            distributionfilename = os.path.splitext(os.path.basename(distributionfile))[0]
+        if self.distributionfile:
+            name = os.path.splitext(
+                    os.path.basename(self.distributionfile))[0]
             try:
-                studies = imp.load_source(distributionfilename,distributionfile).parameters
+                studies = imp.load_source(
+                        name,self.distributionfile).parameters
             except Exception as e:
-                    raise AsterClientException('couldn\'t import distributionfile, %s'%e)
-            self.distributionfile = distributionfile
-        else:
-            studies = [{'name':'main'}]
-            self.distributionfile = None
-        self.profile['distributionfile'] = self.distributionfile
-        return studies
+                raise AsterClientException(
+                        'couldn\'t import distributionfile, %s'%e)
+        study_keys = []
+        study_names = []
+        for i,study in enumerate(studies):
+            study_keys.append(tuple(study.keys()))
+            # set the number
+            study['number'] = i
+            # test the studies specified in the distributionfile
+            name = study.get('name','')
+            if not name:
+                raise AsterClientException('every study needs a name')
+            if name in study_names:
+                raise AsterClientException('study names {0} isn\'t unique'.format(name))
+            else:
+                study_names.append(name)
 
-    def _check_settings(self):
-        # check if all minimum needed keys are available
-        if not 'calculations' in self.profile:
-            raise AsterClientException('you need to specify at least one calculation')
-        self._calculation_names = []
-        self._study_names = []
-        for calculation in self.profile['calculations']:
-            self._sanitize_calculation_options(calculation)
-        # check the studie
-        study_keys = set()
-        i = 0
-        for study in self.studies:
-            self._sanitize_study_options(study)
-            study_keys.add(tuple(study.keys()))
-            study['studynumber'] = i
-            i += 1
-
+            meshfile = study.get('meshfile',self.options.get('meshfile'))
+            if not meshfile:
+                raise AsterClientException('no meshfile specified for "{0}"'.format(name))
+            study['meshfile'] = self._abspath(meshfile)
         # check if all studies have the same keys
-        if len(study_keys) > 1:
-            for study in self.studies:
-                print('study %s: %s'%(study['name'],study.keys()))
-            raise AsterClientException('all studies need to have the same keys')
-
-    def _sanitize_calculation_options(self,calculation):
-        # test calculations specified in the profile
-        name = calculation.get('name','')
-        if not name:
-            raise AsterClientException('no calcualtion name specified')
-        if name in self._calculation_names:
-            raise AsterClientException('calculation names {0} isn\'t unique'
-                                       .format(name))
-        else:
-            self._calculation_names.append(name)
-
-        commandfile = calculation.get('commandfile','')
-        if not commandfile:
-            raise AsterClientException('no commandfile specified for "{0}"'
-                                       .format(name))
-        calculation['commandfile'] = self._abspath(commandfile)
-        if 'inputfiles' in calculation:
-            for i,fpath in enumerate(calculation['inputfiles']):
-                calculation['inputfiles'][i] = self._abspath(fpath)
-
-    def _sanitize_study_options(self,study):
-        # test the studies specified in the distributionfile
-        name = study.get('name','')
-        if not name:
-            raise AsterClientException('every study needs a name')
-        if name in self._study_names:
-            raise AsterClientException('study names {0} isn\'t unique'.format(name))
-        else:
-            self._study_names.append(name)
-
-        meshfile = study.get('meshfile',self.profile.get('meshfile'))
-        if not meshfile:
-            raise AsterClientException('no meshfile specified for "{0}"'.format(name))
-        study['meshfile'] = self._abspath(meshfile)
-
-    def get_calculations_to_run(self):
-        # get the calculations which should be run
-        if self.options.calculation:
-            calculations = []
-            calcnames = [calc['name'] for calc in self.profile['calculations']]
-            for x in self.options.calculation:
-                try:
-                    # get by index
-                    key = int(x)
-                except:
-                    key = None
-                if key == None:
-                    try:
-                        key = calcnames.index(x)
-                    except:
-                        raise AsterClientException('there is no calculation "{0}"'.format(x))
-                calculations.append(self.profile['calculations'][key])
-        else:
-            # take all if none is specified
-            calculations = self.profile['calculations']
-        return calculations
-
-    def get_studies_to_run(self):
-        # get the studies which should be run
-        if self.options.study:
-            studies = []
-            studynames = [study['name'] for study in self.studies]
-            for x in self.options.study:
-                try:
-                    # get by index
-                    key = int(x)
-                except:
-                    key = None
-                if key == None:
-                    try:
-                        key = studynames.index(x)
-                    except:
-                        raise AsterClientException('ther is no study "{0}"'.format(x))
-                studies.append(self.studies[key])
-        else:
-            studies = self.studies
+        for i,study in enumerate(study_keys[1:]):
+            if study != study_keys[i-1]:
+                raise AsterClientException(
+                    'all study "{0}" has different keys'.format(i))
         return studies
+
+    @property
+    def calculations_to_run(self):
+        # get the calculations which should be run
+        if not self._calculations_to_run:
+            if self.options["calculation"]:
+                calculations = []
+                calcnames = [calc['name']
+                        for calc in self.options['calculations']]
+                for x in self.options["calculation"]:
+                    try:
+                        # get by index
+                        key = int(x)
+                    except:
+                        key = None
+                    if key == None:
+                        try:
+                            key = calcnames.index(x)
+                        except:
+                            raise AsterClientException(
+                                    'there is no calculation "{0}"'.format(x))
+                    calculations.append(self.options['calculations'][key])
+            else:
+                # take all if none is specified
+                calculations = self.options['calculations']
+            self._calculations_to_run = calculations
+        return self._calculations_to_run
+
+    @property
+    def studies_to_run(self):
+        # get the studies which should be run
+        if not self._studies_to_run:
+            if self.options["study"]:
+                studies = []
+                studynames = [study['name'] for study in self.studies]
+                for x in self.options["study"]:
+                    try:
+                        # get by index
+                        key = int(x)
+                    except:
+                        key = None
+                    if key == None:
+                        try:
+                            key = studynames.index(x)
+                        except:
+                            raise AsterClientException(
+                                    'ther is no study "{0}"'.format(x))
+                    studies.append(self.studies[key])
+            else:
+                studies = self.studies
+            self._studies_to_run = studies
+        return self._studies_to_run
+
+    @property
+    def executions_nested(self):
+        if not self._executions_nested:
+            self._create_executions()
+        return self._executions_nested
+
+    @property
+    def executions_flat(self):
+        if not self._executions_flat:
+            self._create_executions()
+        return self._executions_flat
+
+    @property
+    def num_executions(self):
+        if not self._num_executions:
+            self._create_executions()
+        return self._num_executions
 
     def _prepare_paths_for_run(self):
         """ set up the paths
         """
-        self.outdir = self._abspath(self.profile.get('outdir','results'))
-        self.profile['outdir'] = self.outdir
+        self.outdir = self._abspath(self.options.get('outdir','results'))
+        self.options['outdir'] = self.outdir
         # setup the workdir
-        workdir = self.profile.get('workdir',self.options.workdir)
+        workdir = self.options.get('workdir')
         if not workdir:
             workdir = tempfile.mkdtemp(
-                '_asterclient',self.profile.get('project','tmp'))
+                '_asterclient',self.options.get('project','tmp'))
             self._remove_at_exit.append(workdir)
         else:
             workdir = self._abspath(workdir)
@@ -369,7 +468,7 @@ class AsterClient(object):
             except:
                 pass
         self.workdir = workdir
-        self.profile['workdir'] = self.workdir
+        self.options['workdir'] = self.workdir
 
     def _create_executions(self):
         executions = []
@@ -379,48 +478,27 @@ class AsterClient(object):
             for calc in self.calculations_to_run:
                 need = calc.get('poursuite')
                 tmp[calc['name']] = Calculation(
-                    self.config,study,calc,need)
+                    self.options,study,calc,need)
                 count += 1
             for calc in tmp.values():
                 if calc.needs and calc.needs in tmp:
                     tmp[calc.needs].run_after = calc
                 else:
                     executions.append(calc)
-        return executions,count
+        self._executions_nested = executions
+        self._executions_flat = tmp
+        self._num_executions = count
 
-    def run(self):
-        # do whatever has to be done
-        if self.options.action == 'info':
-            self.info_studies()
-            self.info_calculations()
-        elif self.options.action == 'run':
-            self.init()
-            self._run()
-
-    def _run_parallel(self):
+    def run_parallel(self):
+        self._init()
         log_queue = queue = multiprocessing.Queue(-1)
-        file_formatter = logging.Formatter(
-            '%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
-        console_formatter = logging.Formatter(
-            '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
-        console_handler = logging.StreamHandler(sys.stdout)
-        file_handler = logging.FileHandler(self.config.logfile, 'a')
-        file_handler.setFormatter(file_formatter)
-        console_handler.setFormatter(console_formatter)
-        try:
-            console_handler.setLevel(self.options.log_level.upper())
-        except:
-            logger.error('"{0}" is no correct log level'.
-                         format(self.options.log_level.upper()))
-            console_handler.setLevel('INFO')
-        file_handler.setLevel(logging.DEBUG)
-        listener = QueueListener(log_queue, console_handler,file_handler)
+        listener = QueueListener(log_queue, *self.logger.handlers)
         task_queue = multiprocessing.Queue()
         counter_lock = multiprocessing.Lock()
         counter = multiprocessing.Value('i',(self.num_executions))
-        num_consumers = min((self.options.max_parallel,self.num_executions))
+        num_consumers = min((self.options["max_parallel"],self.num_executions))
         # Enqueue jobs
-        for calc in self.executions:
+        for calc in self.executions_nested:
             task_queue.put(calc)
         # start the log listener
         listener.start()
@@ -437,29 +515,36 @@ class AsterClient(object):
         # now also close the log listener
         listener.stop()
 
-    def _run_sequential(self,calcs):
-        for calc in calcs:
-            if self._kill_event.is_set():
-                break
-            calc(kill_event=self._kill_event)
-            self._run_sequential(calc.run_after)
+    def run_sequential(self):
+        self._init()
+        def run_sequential_recursive(calcs):
+            for calc in calcs:
+                if self._kill_event.is_set():
+                    break
+                calc(kill_event=self._kill_event,logger=self.logger)
+                run_sequential_recursive(calc.run_after)
+        run_sequential_recursive(self.executions_nested)
 
     def shutdown(self,sig,frame):
-        logger.warn('will shutdown all processes, interrupt')
+        self.logger.warn('will shutdown all processes, interrupt')
         self._kill_event.set()
 
-    def _run(self):
-        self.calculations_to_run = self.get_calculations_to_run()
-        self.studies_to_run = self.get_studies_to_run()
-        self.executions,self.num_executions = self._create_executions()
-        if self.options.parallel and not self.options.prepare:
-            self._run_parallel()
-        elif self.options.parallel and self.options.prepare:
-            raise AsterClientException('parallel preparation not supported')
-        else:
-            self._run_sequential(self.executions)
+    def prepare(self):
+        self._init()
+        for calc in self.executions_nested:
+            # we only need to run the toplevel executions here since the
+            # others would fail anyways, or wouldn't be up to date
+            # maybe still useful, don't know how would be ideal
+            calc.prepare()
+    def copy_results(self):
+        self._init()
+        for calc in self.executions_flat.values():
+            calc.copy_results()
 
-    def info_studies(self):
+    def info(self):
+        self.info_studies()
+        self.info_calculations()
+    def _info_studies(self):
         """ print the available studies
         of the given profile file"""
         print('\navailable parametric studies:\n')
@@ -468,11 +553,11 @@ class AsterClient(object):
             print('\t{0}: {1}\n'.format(i,key['name']))
             i +=1
 
-    def info_calculations(self):
+    def _info_calculations(self):
         """ print the available calculations
         of the given profile file"""
         print('\navailable calculations:\n')
-        for i,calc in enumerate(self.profile['calculations']):
+        for i,calc in enumerate(self.options['calculations']):
             print('\t{0}: {1}\n'.format(i,calc['name']))
 
 class Calculation(object):
@@ -491,6 +576,12 @@ class Calculation(object):
         self.finnished = False
         self._run_after = []
         self._killed = None
+        self._resultfiles = None
+        self.logger = None
+        self.buildpath = os.path.join(
+            self.config["workdir"],self.study['name'],self.calculation['name'])
+        self.outputpath = os.path.join(
+            self.config["outdir"],self.study['name'],self.calculation['name'])
 
     def __str__(self):
         return '<Calculation: %s>'%self.name
@@ -503,16 +594,18 @@ class Calculation(object):
     def run_after(self,calc):
         self._run_after.append(calc)
 
+    def _make_sure_path_exists(self,path):
+        try:
+            os.makedirs(path)
+        except:
+            pass
+
     def _prepare_paths(self):
-        self.buildpath = os.path.join(
-            self.config.workdir,self.study['name'],self.calculation['name'])
-        self.outputpath = os.path.join(
-            self.config.outdir,self.study['name'],self.calculation['name'])
         # make sure buildpath exists and is clean
         try:
             os.makedirs(self.buildpath)
         except:
-            if self.config.clean:
+            if self.config["clean"]:
                 self.logger.debug('cleaning buildpath "{0}"'.format(self.buildpath))
                 shutil.rmtree(self.buildpath)
                 os.makedirs(self.buildpath)
@@ -522,7 +615,7 @@ class Calculation(object):
         try:
             os.makedirs(self.outputpath)
         except:
-            if self.config.clean:
+            if self.config["clean"]:
                 self.logger.debug('cleaning outputpath "{0}"'.format(self.outputpath))
                 shutil.rmtree(self.outputpath)
                 os.makedirs(self.outputpath)
@@ -533,7 +626,7 @@ class Calculation(object):
     def _copy_files(self):
         # copy the elements catalog
         shutil.copyfile(
-            self.config.elements,os.path.join(self.buildpath,'elem.1'))
+            self.config["elements"],os.path.join(self.buildpath,'elem.1'))
         # copy meshfile
         shutil.copyfile(self.study['meshfile'],
                         os.path.join(self.buildpath,'fort.20'))
@@ -562,17 +655,32 @@ class Calculation(object):
         # the resultfiles need already to be created for fortran
         # create a list of files which need to be copied to the
         # resultdirectory
-        resultfiles = {}
-        if 'resultfiles' in self.calculation:
+        if self.resultfiles:
             for key,f in self.calculation['resultfiles'].items():
                 # result files for acces through fortran
                 if type(f) == int:
-                    name = 'fort.%s' %f
+                    name = 'fort.%s'%f
+                    # touch the file
                     with open(os.path.join(self.buildpath,name),'w') as f:
-                        resultfiles[key] = name
-                else:
-                    resultfiles[key] = f
-        self.resultfiles = resultfiles
+                        os.utime(f.name, None)
+
+    @property
+    def resultfiles(self):
+        if self._resultfiles:
+            return self._resultfiles
+        else:
+            resultfiles = {}
+            if 'resultfiles' in self.calculation:
+                for key,f in self.calculation['resultfiles'].items():
+                    # result files for acces through fortran
+                    if type(f) == int:
+                        name = 'fort.%s'%f
+                        with open(os.path.join(self.buildpath,name),'w') as f:
+                            resultfiles[key] = name
+                    else:
+                        resultfiles[key] = f
+            self._resultfiles = resultfiles
+            return self._resultfiles
 
     def _copy_additional_inputfiles(self):
         if 'inputfiles' in self.calculation:
@@ -600,8 +708,8 @@ class Calculation(object):
         if self.config['suivi_batch']:
             arguments.append('--suivi_batch')
 
-        runpy = RUNPY_TEMPLATE.format(aster=self.config.aster,
-                   bibpyt=self.config.bibpyt,
+        runpy = RUNPY_TEMPLATE.format(aster=self.config["aster"],
+                   bibpyt=self.config["bibpyt"],
                    syspath=sys.path,
                    arguments=arguments,
                    params=self.study)
@@ -620,14 +728,14 @@ class Calculation(object):
         os.chmod(self.runsh_path,0o777)
 
     def _run_bashed(self):
-        #signal.signal(signal.SIGINT,self.shutdown)
-        if not self.config.hide_aster:
+        if not self.config["hide_aster"]:
             tee = '| tee {0}; exit $PIPESTATUS'.format(self.infofile)
         else:
             tee = '2&> {0};exit $PIPESTATUS'.format(self.infofile)
         bashscript = '{runsh} {tee}'.format(runsh=self.runsh_path,tee=tee)
-        self.subprocess = subprocess.Popen(['bash','-c',bashscript],cwd=self.buildpath)
-        wait = True
+        self.subprocess = subprocess.Popen(
+                ['bash','-c',bashscript],cwd=self.buildpath)
+        wait = not self.config["dispatch"] # if dispatch option set we just go on
         while wait:
             if self.subprocess.poll() != None:
                 wait = False
@@ -637,16 +745,21 @@ class Calculation(object):
                 self._killed = True
             else:
                 time.sleep(2)
+        if self.subprocess.returncode == 0:
+            self.success = True
 
     def init(self):
-        if not self._initiated:
-            self._prepare_paths()
-            self._copy_files()
-            self._copy_additional_inputfiles()
-            self._createresultfiles()
-            self._create_runpy()
-            self._create_runsh()
-            self._initiated = True
+        if not self._initiated: # we don't wanna initialize multiple times
+            try:
+                self._prepare_paths()
+                self._copy_files()
+                self._copy_additional_inputfiles()
+                self._createresultfiles()
+                self._create_runpy()
+                self._create_runsh()
+                self._initiated = True
+            except Exception as e:
+                self.logger.error('couldn\'t prepare the execution, %s'%e)
 
     def _run_info(self):
         if self.subprocess.returncode == 0:
@@ -657,49 +770,53 @@ class Calculation(object):
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
                              .format('\n\t'.join(error_en)))
 
-    def _set_logger(self):
-        if self._queue:
-            handler = logutils.queue.QueueHandler(self._queue)
-        else:
-            handler = logging.StreamHandler()
-            console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
-            handler.setFormatter(console_formatter)
-        self.logger = logging.getLogger(self.name)
-        self.logger.addHandler(handler)
-        self.logger.setLevel(logging.DEBUG)
-
-    def __call__(self,kill_event=None,queue=None):
-        self._queue = queue
-        self._set_logger()
-        self._kill_event = kill_event
-        if not self._processing:
-            self.logger.info('started processing')
-            try:
-                self._processing = True
-                if self.config.prepare:
-                    self.init()
-                    self.logger.info('cd to "{0}" and run "run.sh" '.format(self.buildpath))
+    def _set_logger(self,queue=None,logger=None):
+        if not self.logger:
+            if logger:
+                self.logger = logger
+            else:
+                self.logger = logging.getLogger(self.name)
+                self.logger.setLevel(logging.DEBUG)
+                if queue:
+                    handler = logutils.queue.QueueHandler(queue)
                 else:
-                    self.init()
-                    self._run_bashed()
-                    self._run_info()
-                    self._copyresults()
-                    if self.subprocess.returncode == 0:
-                        self.success = True
-            except:
-                self.logger.exception('internal error')
-            finally:
-                self._processing = False
-                self.finnished = True
-            self.logger.info('finnished processing')
+                    handler = logging.StreamHandler()
+                    console_formatter = logging.Formatter(
+                        '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
+                    handler.setFormatter(console_formatter)
+                self.logger.addHandler(handler)
 
-    def _copyresults(self):
+    def __call__(self,kill_event=None,queue=None,logger=None):
+        self._kill_event = kill_event
+        self._set_logger(queue=queue,logger=logger)
+        if not self._processing: # we certainly don't wanna run multiple times
+            self._processing = True
+            self.logger.info('started processing')
+            self.init()
+            if self._initiated:
+                self._run_bashed()
+                if not self.config["dispatch"]:
+                    self._run_info()
+                    self.copy_results()
+                    self._processing = False
+                    self.finnished = True
+                    self.logger.info('finnished processing')
+                else:
+                    self.logger.info('dispatched run to process "{0}"'
+                            .format(self.subprocess.pid))
+
+    def prepare(self,logger=None):
+        self._set_logger(logger=logger)
+        self.init()
+        self.logger.info('prepared run.sh in "{0}"'.format(self.buildpath))
+
+    def copy_results(self,logger=None):
+        self._set_logger(logger=logger)
+        self._make_sure_path_exists(self.outputpath)
         # try to copy results even if errors occured
         for name,fpath in self.resultfiles.items():
             for f in glob.glob(os.path.join(self.buildpath,fpath)):
                 outname = os.path.basename(f)
-                if os.path.getsize(f) == 0 and self.subprocess.returncode == 0:
-                    self.logger.warn('result file "{0}" is empty'.format(outname))
             self._copyresult(f,os.path.join(self.outputpath,outname))
 
         # copy additional inputfiles as well
@@ -721,13 +838,13 @@ class Calculation(object):
         self._copyresult(
             os.path.join(self.buildpath,'fort.20'),
             os.path.join(self.outputpath,os.path.basename(
-            self.config.meshfile)),
+            self.config["meshfile"])),
         )
-        if self.config.distributionfile:
+        if self.config["distributionfile"]:
             self._copyresult(
-                self.config.distributionfile,
+                self.config["distributionfile"],
                 os.path.join(self.outputpath,os.path.basename(
-                    self.config.distributionfile))
+                    self.config["distributionfile"]))
             )
         # copy the zipped base
         self._copyresult(
@@ -738,8 +855,11 @@ class Calculation(object):
             os.path.join(self.buildpath,'pick.1'),
             os.path.join(self.outputpath,'pick.1.zip'),zipped=True
         )
+        self.logger.info('copied results to "{0}"'.format(self.outputpath))
 
     def _copyresult(self,fromfile,tofile,zipped=False):
+        if self.success and os.path.getsize(fromfile) == 0:
+            self.logger.warn('result file "{0}" is empty'.format(outname))
         try:
             if not zipped:
                 shutil.copyfile(fromfile,tofile)
@@ -749,7 +869,7 @@ class Calculation(object):
                            compress_type=zipfile.ZIP_DEFLATED)
                 zipf.close()
         except Exception as e:
-            if self.subprocess.returncode == 0:
+            if self.success:
                 raise e
             else:
                 self.logger.debug('ignore exception for copying result "{0}"'
@@ -758,21 +878,24 @@ class Calculation(object):
 def main(argv=None):
     if not argv:
         argv = sys.argv[1:]
-    parser = make_pasrer()
-    options = parser.parse_args(argv)
-    console_formatter = logging.Formatter('%(processName)-10s %(name)s %(levelname)-8s %(message)s')
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(console_formatter)
-    logger.addHandler(handler)
-    try:
-        logger.setLevel(options.log_level.upper())
-    except:
-        logger.setLevel('INFO')
-    if options.log_level.upper() == 'DEBUG' and not options.parallel:
-        import debug
+
+    parser = Parser(argv)
+    options = parser.options
+    if options["log_level"].upper() == 'DEBUG' and not options["parallel"]:
+        from . import debug
     asterclient = AsterClient(options)
     try:
-        asterclient.run()
+        if options["action"] == 'info':
+            asterclient.info()
+        elif options["action"] == 'prepare':
+            asterclient.prepare()
+        elif options["action"] == 'copy_results':
+            asterclient.copy_results()
+        elif options["action"] == 'run':
+            if options["parallel"]:
+                asterclient.run_parallel()
+            else:
+                asterclient.run_sequential()
     except KeyboardInterrupt:
         pass
         #logger.error('killed all calculations through interrupt')
