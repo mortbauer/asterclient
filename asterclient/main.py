@@ -467,10 +467,6 @@ class AsterClient(object):
             self._remove_at_exit.append(workdir)
         else:
             workdir = self._abspath(workdir)
-            try:
-                os.makedirs(workdir)
-            except:
-                pass
         self.workdir = workdir
         self.options['workdir'] = self.workdir
 
