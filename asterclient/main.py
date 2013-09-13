@@ -547,6 +547,8 @@ class AsterClient(object):
     def copy_results(self):
         self._init()
         for calc in self.executions_flat.values():
+            self.logger.debug('starting to copy results for "{0}"'
+                              .format(calc.name))
             calc.copy_results()
 
     def info(self):
