@@ -890,7 +890,7 @@ def main(argv=None):
 
     parser = Parser(argv)
     options = parser.options
-    if options["log_level"].upper() == 'DEBUG' and not options["parallel"]:
+    if options["log_level"].upper() == 'DEBUG' and not options.get("parallel"):
         from . import debug
     asterclient = AsterClient(options)
     try:
