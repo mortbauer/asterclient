@@ -610,25 +610,31 @@ class Calculation(object):
         except:
             pass
 
-    def _prepare_paths(self):
+    def _clean_path(self,path):
+        try:
+            shutil.rmtree(path)
+            os.makedirs(path)
+            self.logger.debug('cleaned path "{0}"'.format(path))
+        except:
+            self.logger.error('failed to clean path "{0}"'.format(path))
+
+    def _prepare_buildpath(self):
         # make sure buildpath exists and is clean
         try:
             os.makedirs(self.buildpath)
         except:
             if self.config["clean"]:
-                self.logger.debug('cleaning buildpath "{0}"'.format(self.buildpath))
-                shutil.rmtree(self.buildpath)
-                os.makedirs(self.buildpath)
+                self._clean_path(self.buildpath)
             else:
                 self.logger.warn('buildpath "{0}" exists and holds data'.format(self.buildpath))
+
+    def _prepare_outputpath(self):
         # make sure output directory exists and is clean
         try:
             os.makedirs(self.outputpath)
         except:
             if self.config["clean"]:
-                self.logger.debug('cleaning outputpath "{0}"'.format(self.outputpath))
-                shutil.rmtree(self.outputpath)
-                os.makedirs(self.outputpath)
+                self._clean_path(self.outputpath)
             else:
                 self.logger.warn('outputpath "{0}" exists and holds data'.format(self.outputpath))
         self.infofile = os.path.join(self.buildpath,'fort.6')
@@ -761,7 +767,7 @@ class Calculation(object):
     def init(self):
         if not self._initiated: # we don't wanna initialize multiple times
             try:
-                self._prepare_paths()
+                self._prepare_buildpath()
                 self._copy_files()
                 self._copy_additional_inputfiles()
                 self._createresultfiles()
@@ -823,7 +829,7 @@ class Calculation(object):
         self.logger.info('prepared run.sh in "{0}"'.format(self.buildpath))
 
     def copy_results(self):
-        self._make_sure_path_exists(self.outputpath)
+        self._prepare_outputpath()
         # try to copy results even if errors occured
         for name,fpath in self.resultfiles.items():
             for f in glob.glob(os.path.join(self.buildpath,fpath)):
