@@ -108,6 +108,7 @@ class Parser(object):
             # parser for the global options
             preparser = argparse.ArgumentParser(add_help=False)
             preparser.add_argument('--log-level',default='INFO',
+                choices=['DEBUG', 'INFO', 'WARN','ERROR'],
                     help='specify the logging level')
             preparser.add_argument('--logfile',
                     help='path of the used logfile')
@@ -271,16 +272,10 @@ class AsterClient(object):
                 file_handler.setFormatter(file_formatter)
             else:
                 file_handler = None
-            try:
-                logger.setLevel(self.options["log_level"])
-                console_handler.setLevel(self.options["log_level"])
-                if file_handler:
-                    file_handler.setLevel(self.options["log_level"])
-            except:
-                logger.setLevel('INFO')
-                console_handler.setLevel('INFO')
-                if file_handler:
-                    file_handler.setLevel('INFO')
+            logger.setLevel(self.options["log_level"])
+            console_handler.setLevel(self.options["log_level"])
+            if file_handler:
+                file_handler.setLevel(self.options["log_level"])
             if file_handler:
                 logger.addHandler(file_handler)
             logger.addHandler(console_handler)
@@ -478,7 +473,8 @@ class AsterClient(object):
             for calc in self.calculations_to_run:
                 need = calc.get('poursuite')
                 tmp[calc['name']] = Calculation(
-                    self.options,study,calc,need)
+                    self.options,study,calc,need,
+                logger=self.logger if not self.options['parallel'] else None)
                 count += 1
             for calc in tmp.values():
                 if calc.needs and calc.needs in tmp:
@@ -521,7 +517,7 @@ class AsterClient(object):
             for calc in calcs:
                 if self._kill_event.is_set():
                     break
-                calc(kill_event=self._kill_event,logger=self.logger)
+                calc(kill_event=self._kill_event)
                 run_sequential_recursive(calc.run_after)
         run_sequential_recursive(self.executions_nested)
 
@@ -563,7 +559,7 @@ class AsterClient(object):
 class Calculation(object):
     # unfortunately POURSUITE only works in a new process,
     # therefore let us call everything in a knew process
-    def __init__(self,config,study,calculation,needs):
+    def __init__(self,config,study,calculation,needs,logger=None):
         self.config = config
         self.study = study
         self.calculation = calculation
@@ -577,7 +573,7 @@ class Calculation(object):
         self._run_after = []
         self._killed = None
         self._resultfiles = None
-        self.logger = None
+        self._logger = logger
         self.buildpath = os.path.join(
             self.config["workdir"],self.study['name'],self.calculation['name'])
         self.outputpath = os.path.join(
@@ -770,25 +766,28 @@ class Calculation(object):
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
                              .format('\n\t'.join(error_en)))
 
-    def _set_logger(self,queue=None,logger=None):
-        if not self.logger:
-            if logger:
-                self.logger = logger
-            else:
-                self.logger = logging.getLogger(self.name)
-                self.logger.setLevel(logging.DEBUG)
-                if queue:
-                    handler = logutils.queue.QueueHandler(queue)
-                else:
-                    handler = logging.StreamHandler()
-                    console_formatter = logging.Formatter(
-                        '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
-                    handler.setFormatter(console_formatter)
-                self.logger.addHandler(handler)
+    @property
+    def logger(self):
+        if not self._logger:
+            logger = logging.getLogger(self.name)
+            logger.setLevel(self.config['log_level'])
+            if not self.config['parallel']:
+                handler = logging.StreamHandler()
+                console_formatter = logging.Formatter(
+                    '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
+                handler.setFormatter(console_formatter)
+                logger.addHandler(handler)
+            self._logger = logger
+        return self._logger
 
-    def __call__(self,kill_event=None,queue=None,logger=None):
+    def _add_queue(self,queue):
+        if queue:
+            handler = logutils.queue.QueueHandler(queue)
+            self.logger.addHandler(handler)
+
+    def __call__(self,kill_event=None,queue=None):
         self._kill_event = kill_event
-        self._set_logger(queue=queue,logger=logger)
+        self._add_queue(queue)
         if not self._processing: # we certainly don't wanna run multiple times
             self._processing = True
             self.logger.info('started processing')
@@ -805,13 +804,11 @@ class Calculation(object):
                     self.logger.info('dispatched run to process "{0}"'
                             .format(self.subprocess.pid))
 
-    def prepare(self,logger=None):
-        self._set_logger(logger=logger)
+    def prepare(self):
         self.init()
         self.logger.info('prepared run.sh in "{0}"'.format(self.buildpath))
 
-    def copy_results(self,logger=None):
-        self._set_logger(logger=logger)
+    def copy_results(self):
         self._make_sure_path_exists(self.outputpath)
         # try to copy results even if errors occured
         for name,fpath in self.resultfiles.items():
@@ -889,7 +886,7 @@ def main(argv=None):
             asterclient.info()
         elif options["action"] == 'prepare':
             asterclient.prepare()
-        elif options["action"] == 'copy_results':
+        elif options["action"] == 'copyresult':
             asterclient.copy_results()
         elif options["action"] == 'run':
             if options["parallel"]:
