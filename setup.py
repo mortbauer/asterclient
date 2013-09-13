@@ -27,7 +27,7 @@ setup(name='asterclient',
       download_url=asterclient.__url__,
       license=asterclient.__copyright__,
       packages=['asterclient'],
-      package_data={'asterclient':['data/defaults.yml']},
+      package_data={'asterclient':['data/default.conf']},
       dependency_links=parse_dependency_links('requirements.txt'),
       extras_require = {
         'autofigure':  ["matplotlib"]

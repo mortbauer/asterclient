@@ -17,6 +17,7 @@ import logging.handlers
 import logutils.queue
 import configreader
 from . import translator
+from pkg_resources import resource_stream
 
 RUNPY_TEMPLATE = """#!{aster}
 #coding=utf-8
@@ -208,8 +209,7 @@ class Parser(object):
     @property
     def defaultprofile(self):
         if not self._defaultprofile:
-            path = os.path.join(os.path.dirname(__file__),'data','default.conf')
-            with open(path,'r') as f:
+            with resource_stream(__name__, 'data/default.conf') as f:
                 self._defaultprofile = configreader.Config(
                     f,namespace={'os.getenv':os.getenv})
         return self._defaultprofile
@@ -337,16 +337,15 @@ class AsterClient(object):
             self._studies = self._load_studies()
         return self._studies
 
-    def _load_studies(self):
-        if self.distributionfile:
-            name = os.path.splitext(
-                    os.path.basename(self.distributionfile))[0]
-            try:
-                studies = imp.load_source(
-                        name,self.distributionfile).parameters
-            except Exception as e:
-                raise AsterClientException(
-                        'couldn\'t import distributionfile, %s'%e)
+    def _load_studies_from_distr(self):
+        name = os.path.splitext(
+                os.path.basename(self.distributionfile))[0]
+        try:
+            studies = imp.load_source(
+                    name,self.distributionfile).parameters
+        except Exception as e:
+            raise AsterClientException(
+                    'couldn\'t import distributionfile, %s'%e)
         study_keys = []
         study_names = []
         for i,study in enumerate(studies):
@@ -372,6 +371,18 @@ class AsterClient(object):
                 raise AsterClientException(
                     'all study "{0}" has different keys'.format(i))
         return studies
+
+    def _load_studies(self):
+        if self.distributionfile:
+            return self._load_studies_from_distr()
+        else:
+            # we need to get the relevant data and create a study
+            study = {'name':'','number':0}
+            meshfile = self.options.get('meshfile')
+            if not meshfile:
+                raise AsterClientException('no meshfile specified')
+            study['meshfile'] = self._abspath(meshfile)
+        return [study]
 
     @property
     def calculations_to_run(self):
@@ -466,19 +477,22 @@ class AsterClient(object):
     def _create_executions(self):
         executions = []
         count = 0
-        for study in self.studies_to_run:
-            tmp = {}
-            for calc in self.calculations_to_run:
-                need = calc.get('poursuite')
-                tmp[calc['name']] = Calculation(
-                    self.options,study,calc,need,
-                logger=self.logger if not self.options.get('parallel') else None)
-                count += 1
-            for calc in tmp.values():
-                if calc.needs and calc.needs in tmp:
-                    tmp[calc.needs].run_after = calc
-                else:
-                    executions.append(calc)
+        if self.studies_to_run:
+            for study in self.studies_to_run:
+                tmp = {}
+                for calc in self.calculations_to_run:
+                    need = calc.get('poursuite')
+                    tmp[calc['name']] = Calculation(
+                        self.options,study,calc,need,
+                    logger=self.logger if not \
+                        self.options.get('parallel') else None)
+                    count += 1
+                for calc in tmp.values():
+                    if calc.needs and calc.needs in tmp:
+                        tmp[calc.needs].run_after = calc
+                    else:
+                        executions.append(calc)
+
         self._executions_nested = executions
         self._executions_flat = tmp
         self._num_executions = count
@@ -563,7 +577,7 @@ class Calculation(object):
         self.calculation = calculation
         # my needs calculation, needed if we resume
         self.needs = needs
-        self.name = '{0}:{1}'.format(study['name'],calculation['name'])
+        self.name = '{0}:{1}'.format(study.get('name'),calculation['name'])
         self._initiated = False
         self._processing = False
         self.success = False
@@ -573,9 +587,9 @@ class Calculation(object):
         self._resultfiles = None
         self._logger = logger
         self.buildpath = os.path.join(
-            self.config["workdir"],self.study['name'],self.calculation['name'])
+            self.config["workdir"],self.study.get('name'),self.calculation['name'])
         self.outputpath = os.path.join(
-            self.config["outdir"],self.study['name'],self.calculation['name'])
+            self.config["outdir"],self.study.get('name'),self.calculation['name'])
 
     def __str__(self):
         return '<Calculation: %s>'%self.name
