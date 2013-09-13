@@ -472,7 +472,7 @@ class AsterClient(object):
                 need = calc.get('poursuite')
                 tmp[calc['name']] = Calculation(
                     self.options,study,calc,need,
-                logger=self.logger if not self.options['parallel'] else None)
+                logger=self.logger if not self.options.get('parallel') else None)
                 count += 1
             for calc in tmp.values():
                 if calc.needs and calc.needs in tmp:
