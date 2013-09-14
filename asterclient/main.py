@@ -52,14 +52,13 @@ def get_code_aster_error(filename):
 class Consumer(multiprocessing.Process):
 
     def __init__(self, task_queue, kill_event,counter,
-                 counter_lock,log_queue,num_consumers,**kwargs):
+                 counter_lock,num_consumers,**kwargs):
         # let us ignore interupts
         multiprocessing.Process.__init__(self)
         self.task_queue = task_queue
         self.kill_event = kill_event
         self.counter = counter
         self.counter_lock = counter_lock
-        self.log_queue = log_queue
         self.num_consumers = num_consumers
         self.kwargs = kwargs
 
@@ -72,10 +71,10 @@ class Consumer(multiprocessing.Process):
                 # None as death pill
                 break
             answer = next_task(
-                self.kill_event,queue=self.log_queue,**self.kwargs)
+                self.kill_event,**self.kwargs)
             if not self.kill_event.is_set():
                 for calc in next_task.run_after:
-                    calc._remove_logger()
+                    calc.unset_logger()
                     self.task_queue.put(calc)
             with self.counter_lock:
                 self.counter.value -= 1
@@ -257,6 +256,11 @@ class AsterClient(object):
         self._calculationsdict = None
         self._kill_event = multiprocessing.Event()
         signal.signal(signal.SIGINT,self.shutdown)
+        self._manager = multiprocessing.Manager()
+        self._log_queue  = self._manager.Queue(-1)
+        self._listener = QueueListener(self._log_queue, *self.logger.handlers)
+        # start the log listener
+        self._listener.start()
 
     def _absolutize_option_paths(self):
         for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
@@ -486,31 +490,25 @@ class AsterClient(object):
         self._ensure_workdir()
         executions = []
         executions_flat = []
-        count = 0
         if self.studies_to_run:
             for study in self.studies_to_run:
                 tmp = {}
                 for calc in self.calculations_to_run:
                     need = calc.get('poursuite')
                     tmp[calc['name']] = Calculation(
-                        self.options,study,calc,need,
-                    logger=self.logger if not \
-                        self.options.get('parallel') else None)
-                    count += 1
+                        self.options,study,calc,need,self._log_queue)
                 for calc in tmp.values():
                     if calc.needs and calc.needs in tmp:
-                        tmp[calc.needs].run_after = calc
+                        tmp[calc.needs].append_run_after(calc)
                     else:
                         executions.append(calc)
                     executions_flat.append(calc)
 
         self._executions_nested = executions
         self._executions_flat = executions_flat
-        self._num_executions = count
+        self._num_executions = len(executions_flat)
 
     def run_parallel(self,**kwargs):
-        log_queue = queue = multiprocessing.Queue(-1)
-        listener = QueueListener(log_queue, *self.logger.handlers)
         task_queue = multiprocessing.Queue()
         counter_lock = multiprocessing.Lock()
         counter = multiprocessing.Value('i',(self.num_executions))
@@ -519,23 +517,20 @@ class AsterClient(object):
         # Enqueue jobs
         for calc in self.executions_nested:
             # remove logger object if already hase one
-            calc._remove_logger()
+            calc.unset_logger()
             task_queue.put(calc)
-        # start the log listener
-        listener.start()
         # Start consumers
         consumers = []
         for i in range(num_consumers):
             c = Consumer(task_queue,self._kill_event,counter,
-                         counter_lock,log_queue,num_consumers,**kwargs)
+                         counter_lock,num_consumers,**kwargs)
             consumers.append(c)
             c.start()
         # Wait for all of the tasks to finish
         for c in consumers:
             c.join()
-        # now also close the log listener
-        listener.stop()
-        if not self.options["dispatch"] and self.options["clean"]:
+        # remove tmp dir again
+        if not self.options.get("dispatch") and self.options.get("clean"):
             self.remove_tmp()
 
     def run_sequential(self,**kwargs):
@@ -546,24 +541,24 @@ class AsterClient(object):
                 calc(kill_event=self._kill_event,**kwargs)
                 run_sequential_recursive(calc.run_after)
         run_sequential_recursive(self.executions_nested)
-        if not self.options["dispatch"] and self.options["clean"]:
+        if not self.options.get("dispatch") and self.options.get("clean"):
             self.remove_tmp()
 
     def shutdown(self,sig,frame):
         self.logger.warn('will shutdown all processes, interrupt')
         self._kill_event.set()
 
-    def prepare(self):
+    def prepare(self,**kwargs):
         for calc in self.executions_nested:
             # we only need to run the toplevel executions here since the
             # others would fail anyways, or wouldn't be up to date
             # maybe still useful, don't know how would be ideal
-            calc.prepare()
-    def copy_results(self):
-        for calc in self.executions_flat.values():
+            calc.prepare(**kwargs)
+    def copy_results(self,**kwargs):
+        for calc in self.executions_flat:
             self.logger.debug('starting to copy results for "{0}"'
                               .format(calc.name))
-            calc.copy_results()
+            calc.copy_results(**kwargs)
 
     def remove_tmp(self):
         for f in self._remove_at_exit:
@@ -592,7 +587,7 @@ class AsterClient(object):
 class Calculation(object):
     # unfortunately POURSUITE only works in a new process,
     # therefore let us call everything in a knew process
-    def __init__(self,config,study,calculation,needs,logger=None):
+    def __init__(self,config,study,calculation,needs,queue):
         self.config = config
         self.study = study
         self.calculation = calculation
@@ -606,12 +601,22 @@ class Calculation(object):
         self._run_after = []
         self._killed = None
         self._resultfiles = None
-        self._logger = logger
-        self.buildpath = os.path.join(
-            self.config["workdir"],self.study.get('name'),self.calculation['name'])
-        self.outputpath = os.path.join(
-            self.config["outdir"],self.study.get('name'),self.calculation['name'])
-        self.infofile = os.path.join(self.buildpath,'fort.6')
+        self._logger = None
+        self._queue = queue
+
+    @property
+    def buildpath(self):
+        return os.path.join(self.config["workdir"],
+                            self.study.get('name'),self.calculation['name'])
+
+    @property
+    def outputpath(self):
+        return os.path.join(self.config["outdir"],
+                            self.study.get('name'),self.calculation['name'])
+
+    @property
+    def infofile(self):
+        return os.path.join(self.buildpath,'fort.6')
 
     def __str__(self):
         return '<Calculation: %s>'%self.name
@@ -620,15 +625,8 @@ class Calculation(object):
     def run_after(self):
         return self._run_after
 
-    @run_after.setter
-    def run_after(self,calc):
+    def append_run_after(self,calc):
         self._run_after.append(calc)
-
-    def _make_sure_path_exists(self,path):
-        try:
-            os.makedirs(path)
-        except:
-            pass
 
     def _clean_path(self,path):
         try:
@@ -643,10 +641,11 @@ class Calculation(object):
         try:
             os.makedirs(self.buildpath)
         except:
-            if self.config["clean"]:
+            if self.config.get("clean"):
                 self._clean_path(self.buildpath)
             else:
-                self.logger.warn('buildpath "{0}" exists and holds data'.format(self.buildpath))
+                self.logger.warn('buildpath "{0}" exists and holds data'
+                                 .format(self.buildpath))
 
     def _prepare_outputpath(self):
         # make sure output directory exists and is clean
@@ -804,32 +803,29 @@ class Calculation(object):
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
                              .format('\n\t'.join(error_en)))
 
+
+    def unset_logger(self):
+        self._logger = None
+
     @property
     def logger(self):
         if not self._logger:
             logger = logging.getLogger(self.name)
-            logger.setLevel(self.config.get('log_level','DEBUG'))
-            if not self.config.get('parallel'):
-                handler = logging.StreamHandler()
-                console_formatter = logging.Formatter(
-                    '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
-                handler.setFormatter(console_formatter)
-                logger.addHandler(handler)
+            handler = logutils.queue.QueueHandler(self._queue)
+            logger.addHandler(handler)
             self._logger = logger
         return self._logger
 
-    def _remove_logger(self):
-        self._logger = None
+    def setloglevel(self):
+        try:
+            self.logger.setLevel(self.config.get('log_level','DEBUG'))
+        except:
+            self.logger.setLevel('DEBUG')
 
-    def _add_queue(self,queue):
-        if queue:
-            handler = logutils.queue.QueueHandler(queue)
-            self.logger.addHandler(handler)
-
-    def __call__(self,kill_event=None,queue=None,**kwargs):
+    def __call__(self,kill_event=None,**kwargs):
         self.config.update(kwargs)
+        self.setloglevel()
         self._kill_event = kill_event
-        self._add_queue(queue)
         if not self._processing: # we certainly don't wanna run multiple times
             self._processing = True
             self.logger.info('started processing')
@@ -846,11 +842,15 @@ class Calculation(object):
                     self.logger.info('dispatched run to process "{0}"'
                             .format(self.subprocess.pid))
 
-    def prepare(self):
+    def prepare(self,**kwargs):
+        self.config.update(kwargs)
+        self.setloglevel()
         self.init()
         self.logger.info('prepared run.sh in "{0}"'.format(self.buildpath))
 
-    def copy_results(self):
+    def copy_results(self,**kwargs):
+        self.config.update(kwargs)
+        self.setloglevel()
         self._prepare_outputpath()
         # try to copy results even if errors occured
         for name,fpath in self.resultfiles.items():
@@ -948,6 +948,8 @@ def main(argv=None):
                 asterclient.run_parallel()
             else:
                 asterclient.run_sequential()
+        # now also close the log listener
+        asterclient._listener.stop()
     except KeyboardInterrupt:
         pass
         #logger.error('killed all calculations through interrupt')
