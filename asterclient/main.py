@@ -374,7 +374,7 @@ class AsterClient(object):
         study_keys = []
         study_names = []
         for i,study in enumerate(studies):
-            study_keys.append(tuple(study.keys()))
+            study_keys.append(sum([hash(x) for x in study.keys()]))
             # set the number
             study['number'] = i
             # test the studies specified in the distributionfile
