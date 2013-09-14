@@ -23,7 +23,7 @@ class Translator(object):
     def _get_result(self,text):
         soup = BeautifulSoup(self._ask_google(text))
         result = soup.find('span', id="result_box")
-        return [x.text for x in result.contents]
+        return [x.getText() for x in result.contents]
 
     def get(self):
         if not self.result:
