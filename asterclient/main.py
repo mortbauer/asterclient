@@ -801,7 +801,7 @@ class Calculation(object):
             error = '\n'.join(get_code_aster_error(self.infofile))
             error_en = translator.Translator(error,'fr','en').get()
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
-                             .format('\n\t'.join(error_en)))
+                             .format('\n\t'.join(error_en).encode('ascii', 'ignore'))))
 
 
     def unset_logger(self):
@@ -937,12 +937,11 @@ def main(argv=None):
             from IPython.config.loader import Config
             cfg = Config()
             cfg.TerminalInteractiveShell.banner1 = ''
+            cfg.TerminalInteractiveShell.banner2 = '"cl" is your access to the client\n'
             cfg.PromptManager.in_template="asterclient [\\#]> "
             cfg.PromptManager.out_template="asterclient [\\#]: "
             namespace = {'cl':asterclient}
-            #namespace = {attr:getattr(asterclient,attr) for attr in \
-                         #dir(asterclient) if not attr.startswith('_')}
-            IPython.embed(config=cfg, user_ns=namespace, banner2='')
+            IPython.embed(config=cfg, user_ns=namespace)
         elif options["action"] == 'run':
             if options["parallel"]:
                 asterclient.run_parallel()
