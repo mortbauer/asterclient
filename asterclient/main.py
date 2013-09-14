@@ -39,7 +39,7 @@ exec {runpy}
 def get_code_aster_error(filename):
     res = []
     record = False
-    with open(filename,'r') as f:
+    with open(filename,'r',errors='ignore') as f:
         for line in f:
             if line.startswith('>>') and not record:
                 record = True
