@@ -936,7 +936,7 @@ def main(argv=None):
             import IPython
             from IPython.config.loader import Config
             cfg = Config()
-            cfg.PromptManager.display_banner = False
+            cfg.TerminalInteractiveShell.banner1 = ''
             cfg.PromptManager.in_template="asterclient [\\#]> "
             cfg.PromptManager.out_template="asterclient [\\#]: "
             namespace = {'cl':asterclient}
