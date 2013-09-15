@@ -516,6 +516,7 @@ class AsterClient(object):
         counter = multiprocessing.Value('i',(self.num_executions))
         num_consumers = min((self.options.get("max_parallel",10),
                              self.num_executions))
+        self.logger.debug('will start "{0}" consumers'.format(num_consumers))
         # Enqueue jobs
         for calc in self.executions_nested:
             # remove logger object if already hase one
