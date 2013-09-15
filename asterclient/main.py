@@ -275,6 +275,8 @@ class AsterClient(object):
     def basepath(self):
         if not self._basepath:
             self._basepath = os.path.abspath(self.options.get('srcdir','.'))
+            # add the basepath to the sys path
+            sys.path.append(self._basepath)
         return self._basepath
 
     def _set_logger(self):
