@@ -70,8 +70,12 @@ class Consumer(multiprocessing.Process):
             if not next_task:
                 # None as death pill
                 break
-            answer = next_task(
-                self.kill_event,**self.kwargs)
+            try:
+                answer = next_task(
+                    self.kill_event,**self.kwargs)
+            except Exception as e:
+                self.logger.exception(
+                    'calculation "{0}" failed'.format(next_task.name))
             if not self.kill_event.is_set():
                 for calc in next_task.run_after:
                     calc.unset_logger()
@@ -805,7 +809,6 @@ class Calculation(object):
             error_en = translator.Translator(error,'fr','en').get()
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
                              .format('\n\t'.join(error_en)))
-
 
     def unset_logger(self):
         self._logger = None
