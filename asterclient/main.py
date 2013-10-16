@@ -280,8 +280,9 @@ class AsterClient(object):
 
     def _absolutize_option_paths(self):
         for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
-            self.options[pathkey] = os.path.join(self.options['aster_root'],
-                self.options['version'],self.options[pathkey])
+            if not os.path.isabs(self.options[pathkey]):
+                self.options[pathkey] = os.path.join(self.options['aster_root'],
+                    self.options['version'],self.options[pathkey])
         if not os.path.isabs(self.options['rep_outils']):
             self.options['rep_outils'] = os.path.join(
                 self.options['aster_root'],self.options['rep_outils'])
