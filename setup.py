@@ -1,12 +1,8 @@
 #!/usr/bin/env python
 
-import re
-import sys
 import asterclient
 from setuptools import setup
-from pip.req import parse_requirements
 
-install_reqs = parse_requirements('requirements.txt')
 setup(name='asterclient',
       entry_points = {
           'console_scripts' :
@@ -21,7 +17,6 @@ setup(name='asterclient',
       license=asterclient.__copyright__,
       packages=['asterclient'],
       package_data={'asterclient':['data/default.conf']},
-      install_requires=[str(ir.req) for ir in install_reqs],
       extras_require = {
         'autofigure':  ["matplotlib"]
       },
