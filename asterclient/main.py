@@ -39,7 +39,7 @@ exec {runpy}
 def get_code_aster_error(filename):
     res = []
     record = False
-    with open(filename,'r',errors='ignore') as f:
+    with open(filename,'r') as f:
         for line in f:
             if line.startswith('>>') and not record:
                 record = True
@@ -395,7 +395,7 @@ class AsterClient(object):
         study_keys = []
         study_names = []
         for i,study in enumerate(studies):
-            study_keys.append(sum([hash(x) for x in study.keys()]))
+            study_keys.append(set(study.keys()))
             # set the number
             study['number'] = i
             # test the studies specified in the distributionfile
@@ -412,10 +412,17 @@ class AsterClient(object):
                 raise AsterClientException('no meshfile specified for "{0}"'.format(name))
             study['meshfile'] = self._abspath(meshfile)
         # check if all studies have the same keys
-        for i,study in enumerate(study_keys[1:]):
-            if study != study_keys[i-1]:
+        i = 0
+        for studyx,studyy in zip(study_keys[:-1],study_keys[1:]):
+            if studyx != studyy:
+                if len(studyx) > len(studyy):
+                    diff = studyx.difference(studyy)
+                else:
+                    diff = studyy.difference(studyx)
                 raise AsterClientException(
-                    'all study "{0}" has different keys'.format(i))
+                    'different keys in studies "{0}/{1}": {2}'
+                    .format(i,i+1,[x for x in diff]))
+            i+=1
         return studies
 
     def _load_studies(self):
@@ -593,9 +600,10 @@ class AsterClient(object):
     def _info_studies(self):
         """ print the available studies
         of the given profile file"""
+        studies = self.studies
         print('\navailable parametric studies:\n')
         i = 0
-        for key in self.studies:
+        for key in studies:
             print('\t{0}: {1}\n'.format(i,key['name']))
             i +=1
 
@@ -823,7 +831,12 @@ class Calculation(object):
             error = '\n'.join(get_code_aster_error(self.infofile))
             error_en = translator.Translator(error,'fr','en').get()
             self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
-                             .format('\n\t'.join(error_en)))
+                            .format('\n\t'.join(error_en)))
+            #try:
+            #except:
+                #self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
+                                #.format(error))
+
 
     def unset_logger(self):
         self._logger = None
@@ -970,10 +983,13 @@ def main(argv=None):
                 asterclient.run_parallel()
             else:
                 asterclient.run_sequential()
-        # now also close the log listener
-        asterclient._listener.stop()
     except KeyboardInterrupt:
         pass
+    except AsterClientException as e:
+        print('AsterClientException:\n\t%s'%e)
+    finally:
+        # now also close the log listener
+        asterclient._listener.stop()
         #logger.error('killed all calculations through interrupt')
 
 if '__main__' == __name__:
