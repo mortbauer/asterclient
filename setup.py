@@ -4,7 +4,7 @@ import re
 import sys
 import asterclient
 from setuptools import setup
-
+from pip.req import parse_requirements
 def parse_dependency_links(file_name):
     dependency_links = []
     for line in open(file_name, 'r').read().split('\n'):
@@ -13,7 +13,7 @@ def parse_dependency_links(file_name):
 
     return dependency_links
 
-
+install_reqs = parse_requirements('requirements.txt')
 setup(name='asterclient',
       entry_points = {
           'console_scripts' :
@@ -28,6 +28,7 @@ setup(name='asterclient',
       license=asterclient.__copyright__,
       packages=['asterclient'],
       package_data={'asterclient':['data/default.conf']},
+      install_requires=[str(ir.req) for ir in install_reqs],
       dependency_links=parse_dependency_links('requirements.txt'),
       extras_require = {
         'autofigure':  ["matplotlib"]

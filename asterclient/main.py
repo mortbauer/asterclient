@@ -98,6 +98,10 @@ class AsterClientException(Exception):
     pass
 
 class Parser(object):
+    """
+    maybe i should just subclass argparse
+    see also: http://stackoverflow.com/a/4042861
+    """
     def __init__(self,argv):
         self.argv = argv
         self._preparser = None
@@ -120,7 +124,7 @@ class Parser(object):
             preparser.add_argument('--logfile',
                     help='path of the used logfile')
             preparser.add_argument('-p','--profile',
-                    help='specify profile file')
+                    help='specify profile file',default='')
             self._preparser = preparser
         return self._preparser
 
@@ -169,7 +173,7 @@ class Parser(object):
                     help='run the these calculations')
             clientparser.add_argument('--clean',action='store_true',
                     help='cleans existing workdir and resultdir')
-            clientparser.set_defaults(**self.profile)
+            self._set_defaults(clientparser)
             self._clientparser = clientparser
         return self._clientparser
 
@@ -178,12 +182,12 @@ class Parser(object):
         if not self._parser:
             parser = argparse.ArgumentParser(parents=[self.preparser])
             subparsers = parser.add_subparsers(dest='action')
+            help = subparsers.add_parser('help',
+                parents=[self.preparser,self.asterparser,self.clientparser])
             info = subparsers.add_parser('info',
                 parents=[self.preparser,self.asterparser,self.clientparser])
-            info.set_defaults(**self.profile)
             interactive = subparsers.add_parser('interactive',
                 parents=[self.preparser,self.asterparser,self.clientparser])
-            interactive.set_defaults(**self.profile)
             run = subparsers.add_parser('run',
                 parents=[self.preparser,self.asterparser,self.clientparser])
             run.add_argument('--parallel',action='store_true',
@@ -194,18 +198,26 @@ class Parser(object):
                     help='hide the output of code aster')
             run.add_argument('--dispatch',action='store_true',
                     help='start the calculation but doesn\'t wait for it to finnish')
-            run.set_defaults(**self.profile)
             copyresult = subparsers.add_parser('copyresult',
                 parents=[self.preparser,self.clientparser],
                 help='copies the results to the result folder, useful if'
                     'calculation was dispatched or run by hand')
-            copyresult.set_defaults(**self.profile)
             prepare = subparsers.add_parser('prepare',
                 parents=[self.preparser,self.clientparser],
                 help="only prepare everything")
-            prepare.set_defaults(**self.profile)
+            # set the defaults for all subparsers
+            for p in (prepare,info,copyresult,run,interactive):
+                self._set_defaults(p)
             self._parser = parser
         return self._parser
+
+    def _set_defaults(self,parser):
+        try:
+            parser.set_defaults(**self.profile)
+        except Exception as e:
+            # TODO, find some way to not fail here but still maybe report it
+            #print('### profile not found for defaults',e)
+            pass
 
     @property
     def options(self):
@@ -931,7 +943,9 @@ def main(argv=None):
         from . import debug
     asterclient = AsterClient(options)
     try:
-        if options["action"] == 'info':
+        if options['action'] == 'help':
+            parser.parser.print_help()
+        elif options["action"] == 'info':
             asterclient.info()
         elif options["action"] == 'prepare':
             asterclient.prepare()

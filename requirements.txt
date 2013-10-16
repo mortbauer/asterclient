@@ -1,4 +1,3 @@
-logutils
 argparse>=1.2
 beautifulsoup4
 requests
