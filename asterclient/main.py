@@ -932,7 +932,7 @@ class Calculation(object):
 
     def _copyresult(self,fromfile,tofile,zipped=False):
         if self.success and os.path.getsize(fromfile) == 0:
-            self.logger.warn('result file "{0}" is empty'.format(outname))
+            self.logger.warn('result file "{0}" is empty'.format(tofile))
         self.logger.debug('copiing "{0}"'.format(fromfile))
         try:
             if not zipped:
