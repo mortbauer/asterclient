@@ -7,6 +7,15 @@ programs are poorly documented and quite complex and not very userfriendly in
 my opinion but other opinions might differ. I also wanna state that i'm really
 thankful to EDF for giving acces to code aster.
 
+Installation
+************
+::
+
+    git clone https://github.com/mortbauer/asterclient
+    cd asterclient
+    pip install -r requirements.txt
+    python setup.py install 
+
 Important Links
 ***************
 
