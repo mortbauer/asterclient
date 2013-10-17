@@ -36,6 +36,16 @@ export LD_LIBRARY_PATH="{LD_LIBRARY_PATH}:${{LD_LIBRARY_PATH}}"
 exec {runpy}
 """
 
+def load_default_profile():
+    with resource_stream(__name__, 'data/default.conf') as f:
+        return configreader.Config(
+            f,namespace={'os.getenv':os.getenv})
+
+def load_profile(profilepath):
+    with open(profilepath,'r') as f:
+        return configreader.Config(
+            f,namespace={'os.getenv':os.getenv})
+
 def get_code_aster_error(filename):
     res = []
     record = False
@@ -234,9 +244,7 @@ class Parser(object):
     @property
     def defaultprofile(self):
         if not self._defaultprofile:
-            with resource_stream(__name__, 'data/default.conf') as f:
-                self._defaultprofile = configreader.Config(
-                    f,namespace={'os.getenv':os.getenv})
+            self._defaultprofile = load_default_profile()
         return self._defaultprofile
 
     @property
@@ -244,9 +252,7 @@ class Parser(object):
         if not self._profile:
             profile = copy.copy(self.defaultprofile)
             try:
-                with open(self.preoptions.profile,'r') as f:
-                    profile.update(configreader.Config(
-                        f,namespace={'os.getenv':os.getenv}))
+                profile.update(load_profile(self.preoptions.profile))
             except Exception as e:
                 raise AsterClientException(
                     'the profile {0} couldn\'t be parsed:\n\n\t{1}'
@@ -274,9 +280,10 @@ class AsterClient(object):
         signal.signal(signal.SIGINT,self.shutdown)
         self._manager = multiprocessing.Manager()
         self._log_queue  = self._manager.Queue(-1)
-        self._listener = QueueListener(self._log_queue, *self.logger.handlers)
+        self.loglistener = QueueListener(self._log_queue, *self.logger.handlers)
         # start the log listener
-        self._listener.start()
+        # need to be done from the caller
+        #self.loglistener.start()
 
     def _absolutize_option_paths(self):
         for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
@@ -305,17 +312,25 @@ class AsterClient(object):
             console_formatter = logging.Formatter(
             '%(processName)-10s %(name)s %(levelname)-8s %(message)s')
             console_handler.setFormatter(console_formatter)
-            if self.options["logfile"]:
+            if self.options.get("logfile"):
                 file_handler = logging.FileHandler(self.options["logfile"], 'a')
                 file_formatter = logging.Formatter(
                     '%(asctime)s %(processName)-10s %(name)s %(levelname)-8s %(message)s')
                 file_handler.setFormatter(file_formatter)
             else:
                 file_handler = None
-            logger.setLevel(self.options["log_level"])
-            console_handler.setLevel(self.options["log_level"])
+            loglevel = self.options.get("log_level",'').upper()
+            if hasattr(logging,loglevel):
+                logger.setLevel(loglevel)
+                console_handler.setLevel(loglevel)
+            else:
+                logger.setLevel('DEBUG')
+                console_handler.setLevel('DEBUG')
             if file_handler:
-                file_handler.setLevel(self.options["log_level"])
+                if hasattr(logging,loglevel):
+                    file_handler.setLevel(loglevel)
+                else:
+                    file_handler.setLevel('DEBUG')
             if file_handler:
                 logger.addHandler(file_handler)
             logger.addHandler(console_handler)
@@ -379,7 +394,7 @@ class AsterClient(object):
         return self._distributionfile
 
     @property
-    def studies(self):
+    def studiesdict(self):
         if not self._studies:
             self._studies = self._load_studies()
         return self._studies
@@ -442,7 +457,7 @@ class AsterClient(object):
     def calculations_to_run(self):
         # get the calculations which should be run
         if not self._calculations_to_run:
-            if self.options["calculation"]:
+            if self.options.get("calculation"):
                 calculations = []
                 for x in self.options["calculation"]:
                     try:
@@ -463,9 +478,9 @@ class AsterClient(object):
     def studies_to_run(self):
         # get the studies which should be run
         if not self._studies_to_run:
-            if self.options["study"]:
+            if self.options.get("study"):
                 studies = []
-                studynames = [study['name'] for study in self.studies]
+                studynames = [study['name'] for study in self.studiesdict]
                 for x in self.options["study"]:
                     try:
                         # get by index
@@ -478,9 +493,9 @@ class AsterClient(object):
                         except:
                             raise AsterClientException(
                                     'ther is no study "{0}"'.format(x))
-                    studies.append(self.studies[key])
+                    studies.append(self.studiesdict[key])
             else:
-                studies = self.studies
+                studies = self.studiesdict
             self._studies_to_run = studies
         return self._studies_to_run
 
@@ -601,7 +616,7 @@ class AsterClient(object):
     def _info_studies(self):
         """ print the available studies
         of the given profile file"""
-        studies = self.studies
+        studies = self.studiesdict
         print('\navailable parametric studies:\n')
         i = 0
         for key in studies:
@@ -614,6 +629,7 @@ class AsterClient(object):
         print('\navailable calculations:\n')
         for i,calc in enumerate(self.options['calculations']):
             print('\t{0}: {1}\n'.format(i,calc['name']))
+
 
 class Calculation(object):
     # unfortunately POURSUITE only works in a new process,
@@ -964,6 +980,7 @@ def main(argv=None):
         from . import debug
     asterclient = AsterClient(options)
     try:
+        asterclient.loglistener.start()
         if options['action'] == 'help':
             parser.parser.print_help()
         elif options["action"] == 'info':
@@ -994,8 +1011,8 @@ def main(argv=None):
         print('AsterClientException:\n\t%s'%e)
     finally:
         # now also close the log listener
-        asterclient._listener.stop()
         #logger.error('killed all calculations through interrupt')
+        asterclient.loglistener.stop()
 
 if '__main__' == __name__:
     main()
