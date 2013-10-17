@@ -1,3 +1,42 @@
+Notes
+#####
+Asterclient Enhancement
+***********************
+the parametric studies/distribution should probably be completely redesigned
+============================================================================
+* create a kind of dict like object which contains a set of similar dicts, but
+  not necessery same keys, but similar
+* these similar dicts are the parameters for te different studies
+* the object provides methods to decide for one study
+* it also needs to have a way to retrieve the items of the selected study
+* should work something like that:
+
+    In [39]: studies = Studies(
+             default={'a':1,'b':'kajhf'},
+             studies={
+                 'first':{'a':9,'b':'i'},
+                 'second':{'a':0},
+                 }
+             )
+    In [40]: studies.add_study(
+                 name='third',
+                 parameters={'b':'hallllllo'}
+             )
+
+    In [41]: studies.select_study('second')
+    In [42]: study['a']
+    Out[42]: 0
+    In [43]: studies['b']
+    Out[43]: 'kajhf'
+
+* it should also be possible to select the studies by numbers
+* best would be to also have the instantiation in a seperate module which can
+  be imported by other modules for different calculations, eg:
+  strain-stress-linear, buckling, ...
+                 
+
+Aster
+*****
 to run aster here, just make sure the REPE_OUT directory is empty and then fire
 up::
 
