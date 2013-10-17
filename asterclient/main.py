@@ -297,6 +297,12 @@ class AsterClient(object):
             sys.path.append(os.path.abspath('.'))
         return self._basepath
 
+    @property
+    def outputpath(self):
+        if not os.path.isabs(self.options['outdir']):
+            return os.path.join(
+                self.basepath,self.options["outdir"])
+
     def _set_logger(self):
         if not self.logger:
             logger = logging.getLogger('asterclient')
@@ -614,18 +620,17 @@ class AsterClient(object):
     def _info_studies(self):
         """ print the available studies
         of the given profile file"""
-        studies = self.studiesdict
+        studies = self.studieslist
         print('\navailable parametric studies:\n')
-        i = 0
-        for key in studies:
+        for i,key in enumerate(studies):
             print('\t{0}: {1}\n'.format(i,key['name']))
-            i +=1
 
     def _info_calculations(self):
         """ print the available calculations
         of the given profile file"""
+        calcs = self.calculationslist
         print('\navailable calculations:\n')
-        for i,calc in enumerate(self.options['calculations']):
+        for i,calc in enumerate(calcs):
             print('\t{0}: {1}\n'.format(i,calc['name']))
 
 class Calculation(object):
