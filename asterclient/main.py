@@ -345,6 +345,7 @@ class AsterClient(object):
             raise AsterClient('there are no calcualtions specified')
         calcs = []
         for i,calc in enumerate(self.options['calculations']):
+            calc['number'] = i
             name = calc.get('name','')
             if not name:
                 raise AsterClientException('no calcualtion name specified')
@@ -635,14 +636,19 @@ class Calculation(object):
         self._queue = queue
 
     @property
+    def relpath(self):
+        return os.path.join(
+            '{0:0=2d}_{1}'.format(self.study['number'],self.study['name']),
+            '{0:0=2d}_{1}'.format(self.calculation['number'],self.calculation['name']),
+        )
+
+    @property
     def buildpath(self):
-        return os.path.join(self.config["workdir"],
-                            self.study.get('name'),self.calculation['name'])
+        return os.path.join(self.config["workdir"],self.relpath)
 
     @property
     def outputpath(self):
-        return os.path.join(self.config["outdir"],
-                            self.study.get('name'),self.calculation['name'])
+        return os.path.join(self.config["outdir"],self.relpath)
 
     @property
     def infofile(self):
@@ -836,7 +842,6 @@ class Calculation(object):
             #except:
                 #self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
                                 #.format(error))
-
 
     def unset_logger(self):
         self._logger = None
