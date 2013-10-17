@@ -273,9 +273,11 @@ class AsterClient(object):
         self._num_executions = None
         self._distributionfile = -1
         self._remove_at_exit = []
-        self._studies = None
+        self._studieslist = None
+        self._studiesdict = None
         self._calculationslist = None
         self._calculationsdict = None
+        self._executionsdict = None
         self._kill_event = multiprocessing.Event()
         signal.signal(signal.SIGINT,self.shutdown)
         self._manager = multiprocessing.Manager()
@@ -284,16 +286,6 @@ class AsterClient(object):
         # start the log listener
         # need to be done from the caller
         #self.loglistener.start()
-
-    def _absolutize_option_paths(self):
-        for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
-            if not os.path.isabs(self.options[pathkey]):
-                self.options[pathkey] = os.path.join(self.options['aster_root'],
-                    self.options['version'],self.options[pathkey])
-        if not os.path.isabs(self.options['rep_outils']):
-            self.options['rep_outils'] = os.path.join(
-                self.options['aster_root'],self.options['rep_outils'])
-        self.options['outdir'] = self._abspath(self.options['outdir'])
 
     @property
     def basepath(self):
@@ -394,10 +386,16 @@ class AsterClient(object):
         return self._distributionfile
 
     @property
+    def studieslist(self):
+        if not self._studieslist:
+            self._studieslist = self._load_studies()
+        return self._studieslist
+
+    @property
     def studiesdict(self):
-        if not self._studies:
-            self._studies = self._load_studies()
-        return self._studies
+        if not self._studiesdict:
+            self._studiesdict = {c['name']:c for c in self.studieslist}
+        return self._studiesdict
 
     def _load_studies_from_distr(self):
         name = os.path.splitext(
@@ -461,16 +459,18 @@ class AsterClient(object):
                 calculations = []
                 for x in self.options["calculation"]:
                     try:
-                        calculations.append(self.calculationslist[int(x)])
+                        calculations.append(
+                            self.calculationslist[int(x)]['name'])
                     except:
                         try:
-                            calculations.append(self.calculationsdict[x])
+                            calculations.append(
+                                self.calculationsdict[x]['name'])
                         except:
                             raise AsterClientException(
                                     'there is no calculation "{0}"'.format(x))
             else:
                 # take all if none is specified
-                calculations = self.calculationslist
+                calculations = self.calculationsdict.keys()
             self._calculations_to_run = calculations
         return self._calculations_to_run
 
@@ -480,22 +480,17 @@ class AsterClient(object):
         if not self._studies_to_run:
             if self.options.get("study"):
                 studies = []
-                studynames = [study['name'] for study in self.studiesdict]
                 for x in self.options["study"]:
                     try:
-                        # get by index
-                        key = int(x)
+                        studies.append(self.studieslist[int(x)]['name'])
                     except:
-                        key = None
-                    if key == None:
                         try:
-                            key = studynames.index(x)
+                            studies.append(self.studiesdict[x]['name'])
                         except:
                             raise AsterClientException(
                                     'ther is no study "{0}"'.format(x))
-                    studies.append(self.studiesdict[key])
             else:
-                studies = self.studiesdict
+                studies = self.studiesdict.keys()
             self._studies_to_run = studies
         return self._studies_to_run
 
@@ -517,33 +512,36 @@ class AsterClient(object):
             self._create_executions()
         return self._num_executions
 
-    def _ensure_workdir(self):
-        # setup the workdir
-        workdir = self.options.get('workdir')
-        if not workdir:
-            workdir = tempfile.mkdtemp(
-                suffix='.asterclient',prefix=self.options.get('project'))
-            self._remove_at_exit.append(workdir)
-            self.logger.info('created temporary dir "{0}"'.format(workdir))
-        else:
-            workdir = self._abspath(workdir)
-        self.options['workdir'] = workdir
+    @staticmethod
+    def _exname(sname,cname):
+        return '%s:%s'%(sname,cname)
+
+    @property
+    def executionsdict(self):
+        if not self._executionsdict:
+            exc = {}
+            for sname,study in self.studiesdict.items():
+                for cname,calc in self.calculationsdict.items():
+                    exc[self._exname(sname,cname)] = Calculation(
+                        self.options,study,calc,self._log_queue,self.basepath)
+            for ex in exc.values():
+                need = ex.config.get('poursuite')
+                if need:
+                    ex.needs = ex[self._exname(ex.studyname,need)]
+            self._executionsdict = exc
+        return self._executionsdict
 
     def _create_executions(self):
-        self._absolutize_option_paths()
-        self._ensure_workdir()
         executions = []
         executions_flat = []
         if self.studies_to_run:
             for study in self.studies_to_run:
                 tmp = {}
                 for calc in self.calculations_to_run:
-                    need = calc.get('poursuite')
-                    tmp[calc['name']] = Calculation(
-                        self.options,study,calc,need,self._log_queue)
+                    tmp[calc] = self.executionsdict[self._exname(study,calc)]
                 for calc in tmp.values():
-                    if calc.needs and calc.needs in tmp:
-                        tmp[calc.needs].append_run_after(calc)
+                    if calc.needs and calc.needs.calcname in tmp:
+                        tmp[calc.needs.calcname].append_run_after(calc)
                     else:
                         executions.append(calc)
                     executions_flat.append(calc)
@@ -630,17 +628,19 @@ class AsterClient(object):
         for i,calc in enumerate(self.options['calculations']):
             print('\t{0}: {1}\n'.format(i,calc['name']))
 
-
 class Calculation(object):
     # unfortunately POURSUITE only works in a new process,
     # therefore let us call everything in a knew process
-    def __init__(self,config,study,calculation,needs,queue):
+    def __init__(self,config,study,calculation,queue,basepath,needs=None):
+        self.basepath = basepath
         self.config = config
         self.study = study
+        self.studyname = study['name']
+        self.calcname = calculation['name']
         self.calculation = calculation
         # my needs calculation, needed if we resume
         self.needs = needs
-        self.name = '{0}:{1}'.format(study.get('name'),calculation['name'])
+        self.name = '{0}:{1}'.format(self.studyname,self.calcname)
         self._initiated = False
         self._processing = False
         self.success = False
@@ -650,6 +650,19 @@ class Calculation(object):
         self._resultfiles = None
         self._logger = None
         self._queue = queue
+        self._workdir = None
+        self._remove_at_exit = []
+        self._outputpath = None
+        self._absolutize_option_paths()
+
+    def _absolutize_option_paths(self):
+        for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
+            if not os.path.isabs(self.config[pathkey]):
+                self.config[pathkey] = os.path.join(self.config['aster_root'],
+                    self.config['version'],self.config[pathkey])
+        if not os.path.isabs(self.config['rep_outils']):
+            self.config['rep_outils'] = os.path.join(
+                self.config['aster_root'],self.config['rep_outils'])
 
     @property
     def relpath(self):
@@ -659,12 +672,34 @@ class Calculation(object):
         )
 
     @property
+    def workdir(self):
+        if not self._workdir:
+            workdir = self.config.get('workdir')
+            if not workdir:
+                workdir = tempfile.mkdtemp(
+                    suffix='.asterclient',prefix=self.config.get('project'))
+                self._remove_at_exit.append(workdir)
+                self.logger.info('created temporary dir "{0}"'.format(workdir))
+            else:
+                if not os.path.isabs(workdir):
+                    workdir = os.path.join(self.basepath,workdir)
+            self._workdir = workdir
+        return self._workdir
+
+    @property
     def buildpath(self):
-        return os.path.join(self.config["workdir"],self.relpath)
+        return os.path.join(self.workdir,self.relpath)
 
     @property
     def outputpath(self):
-        return os.path.join(self.config["outdir"],self.relpath)
+        if not self._outputpath:
+            if not os.path.isabs(self.config['outdir']):
+                self._outputpath = os.path.join(
+                    self.basepath,self.config["outdir"],self.relpath)
+            else:
+                self._outputpath = os.path.join(
+                    self.config["outdir"],self.relpath)
+        return self._outputpath
 
     @property
     def infofile(self):
@@ -707,7 +742,8 @@ class Calculation(object):
             if self.config["clean"]:
                 self._clean_path(self.outputpath)
             else:
-                self.logger.warn('outputpath "{0}" exists and holds data'.format(self.outputpath))
+                self.logger.warn('outputpath "{0}" exists and holds data'
+                                 .format(self.outputpath))
 
     def _copy_files(self):
         # copy the elements catalog
@@ -722,10 +758,8 @@ class Calculation(object):
             os.path.join(self.buildpath,'fort.1'))
         # if calculation is a continued one copy the results from the
         if 'poursuite' in self.calculation and self.needs:
-            glob1 = os.path.join(self.config['outdir'],self.study['name'],
-                                 self.needs,'glob.1.zip')
-            pick1 = os.path.join(self.config['outdir'],self.study['name'],
-                                 self.needs,'pick.1.zip')
+            glob1 = os.path.join(self.needs.outputpath,'glob.1.zip')
+            pick1 = os.path.join(self.needs.outputpath,'pick.1.zip')
             try:
                 self.logger.debug('try to copy glob.1.zip from %s'%glob1)
                 with zipfile.ZipFile(glob1,'r',allowZip64=True) as zipf:
