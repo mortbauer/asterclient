@@ -531,9 +531,10 @@ class AsterClient(object):
                     exc[self._exname(sname,cname)] = Calculation(
                         self.options,study,calc,self._log_queue,self.basepath)
             for ex in exc.values():
-                need = ex.config.get('poursuite')
+                need = ex.calculation.get('poursuite')
+                print(ex.name,need)
                 if need:
-                    ex.needs = ex[self._exname(ex.studyname,need)]
+                    ex.needs = exc[self._exname(ex.studyname,need)]
             self._executionsdict = exc
         return self._executionsdict
 
