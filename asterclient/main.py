@@ -254,7 +254,7 @@ class Parser(object):
             if self.preoptions.profile:
                 try:
                     profile.update(load_profile(self.preoptions.profile))
-                except Exception as e:
+                except configreader.ConfigException  as e:
                     raise AsterClientException(
                         'the profile {0} couldn\'t be parsed:\n\n\t{1}'
                         .format(self.preoptions.profile,e))
