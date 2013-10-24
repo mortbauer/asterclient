@@ -212,12 +212,12 @@ class Parser(object):
         return self._parser
 
     def _set_defaults(self,parser):
-        try:
-            parser.set_defaults(**self.profile)
-        except Exception as e:
-            # TODO, find some way to not fail here but still maybe report it
-            #print('### profile not found for defaults',e)
-            pass
+        #try:
+        parser.set_defaults(**self.profile)
+        #except Exception as e:
+            ## TODO, find some way to not fail here but still maybe report it
+            ##print('### profile not found for defaults',e)
+            #pass
 
     @property
     def options(self):
@@ -243,14 +243,15 @@ class Parser(object):
     def profile(self):
         if not self._profile:
             profile = copy.copy(self.defaultprofile)
-            try:
-                with open(self.preoptions.profile,'r') as f:
-                    profile.update(configreader.Config(
-                        f,namespace={'os.getenv':os.getenv}))
-            except Exception as e:
-                raise AsterClientException(
-                    'the profile {0} couldn\'t be parsed:\n\n\t{1}'
-                    .format(self.preoptions.profile,e))
+            if self.preoptions.profile:
+                try:
+                    with open(self.preoptions.profile,'r') as f:
+                        profile.update(configreader.Config(
+                            f,namespace={'os.getenv':os.getenv}))
+                except Exception as e:
+                    raise AsterClientException(
+                        'the profile {0} couldn\'t be parsed:\n\n\t{1}'
+                        .format(self.preoptions.profile,e))
             self._profile = profile
         return self._profile
 
@@ -412,7 +413,7 @@ class AsterClient(object):
                 raise AsterClientException('no meshfile specified for "{0}"'.format(name))
             study['meshfile'] = self._abspath(meshfile)
         # check if all studies have the same keys
-        for i,study in enumerate(study_keys[1:]):
+        for i,study in enumerate(study_keys):
             if study != study_keys[i-1]:
                 raise AsterClientException(
                     'all study "{0}" has different keys'.format(i))
