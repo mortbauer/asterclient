@@ -1,3 +1,12 @@
+"""
+interactive usage::
+
+    dp = load_default_profile()
+    dp.update(load_profile('path/to/your/profile')
+    cl = AsterClient(dp)
+
+"""
+
 import pickle
 import os
 import sys
@@ -86,10 +95,13 @@ class Consumer(multiprocessing.Process):
             except Exception as e:
                 self.logger.exception(
                     'calculation "{0}" failed'.format(next_task.name))
-            if not self.kill_event.is_set():
-                for calc in next_task.run_after:
-                    calc.unset_logger()
-                    self.task_queue.put(calc)
+            for calc in next_task.run_after:
+                if self.kill_event.is_set():
+                    break
+                print('#############')
+                calc.unset_logger()
+                self.task_queue.put(calc)
+                print('#############')
             with self.counter_lock:
                 self.counter.value -= 1
                 if self.counter.value == 0 or self.kill_event.is_set():
@@ -745,7 +757,7 @@ class Calculation(object):
         try:
             os.makedirs(self.outputpath)
         except:
-            if self.config["clean"]:
+            if self.config.get("clean"):
                 self._clean_path(self.outputpath)
             else:
                 self.logger.warn('outputpath "{0}" exists and holds data'
