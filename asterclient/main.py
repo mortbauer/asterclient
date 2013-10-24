@@ -98,10 +98,9 @@ class Consumer(multiprocessing.Process):
             for calc in next_task.run_after:
                 if self.kill_event.is_set():
                     break
-                print('#############')
-                calc.unset_logger()
+                # the logger has an object which can't be pickled, so remove
+                # the logger before pickling
                 self.task_queue.put(calc)
-                print('#############')
             with self.counter_lock:
                 self.counter.value -= 1
                 if self.counter.value == 0 or self.kill_event.is_set():
@@ -726,6 +725,12 @@ class Calculation(object):
     def __str__(self):
         return '<Calculation: %s>'%self.name
 
+
+    def __getstate__(self):
+        d = self.__dict__.copy()
+        d['_logger'] = None
+        return d
+
     @property
     def run_after(self):
         return self._run_after
@@ -910,9 +915,6 @@ class Calculation(object):
             #except:
                 #self.logger.warn('Code Aster run ended with ERRORS:\n\n\t{0}\n'
                                 #.format(error))
-
-    def unset_logger(self):
-        self._logger = None
 
     @property
     def logger(self):
