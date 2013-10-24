@@ -100,6 +100,7 @@ class Consumer(multiprocessing.Process):
                     break
                 # the logger has an object which can't be pickled, so remove
                 # the logger before pickling
+                #calc.needs = None
                 self.task_queue.put(calc)
             with self.counter_lock:
                 self.counter.value -= 1
@@ -107,7 +108,6 @@ class Consumer(multiprocessing.Process):
                     # now we enque the death pills for each consumer
                     for i in range(self.num_consumers):
                         self.task_queue.put(None)
-
 class QueueListener(logutils.queue.QueueListener):
     def handle(self, record):
         for handler in self.handlers:
@@ -545,7 +545,7 @@ class AsterClient(object):
             for ex in exc.values():
                 need = ex.calculation.get('poursuite')
                 if need:
-                    ex.needs = exc[self._exname(ex.studyname,need)]
+                    ex.needs = exc[self._exname(ex.studyname,need)].copy()
             self._executionsdict = exc
         return self._executionsdict
 
@@ -670,6 +670,12 @@ class Calculation(object):
         self._remove_at_exit = []
         self._outputpath = None
         self._absolutize_option_paths()
+
+    def copy(self):
+        return Calculation(
+            self.config,self.study,self.calculation,
+            self._queue,self.basepath,self.needs
+        )
 
     def _absolutize_option_paths(self):
         for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:

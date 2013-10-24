@@ -209,9 +209,12 @@ WELDN=POST_RELEVE_T(ACTION=(_F(OPERATION='EXTRACTION',
                               NOM_CMP='SIXX',
                               GROUP_NO='weldn',),))
 
-SIGM=CREA_CHAMP(TYPE_CHAM='ELNO_SIEF_R', OPERATION='EXTR', RESULTAT=RESU,NUME_ORDRE=1,NOM_CHAM=sigmaxx,)
+SIGM=CREA_CHAMP(TYPE_CHAM='ELNO_SIEF_R',
+                OPERATION='EXTR', RESULTAT=RESU,NUME_ORDRE=1,NOM_CHAM=sigmaxx,)
 
-VMIS=CREA_CHAMP(TYPE_CHAM='ELNO_NEUT_R', OPERATION='EXTR', RESULTAT=RESU2,NUME_ORDRE=1, NOM_CHAM='UT01_ELNO',);
+VMIS=CREA_CHAMP(TYPE_CHAM='ELNO_NEUT_R',
+                OPERATION='EXTR', RESULTAT=RESU2,
+                NUME_ORDRE=1, NOM_CHAM='UT01_ELNO',PROL_ZERO='OUI');
 
 IMPR_RESU(UNITE=38,FORMAT='RESULTAT',
          RESU=(_F(RESULTAT=RESU2,
@@ -243,13 +246,12 @@ SAmech = ASSE_MATRICE(NUME_DDL=nddl,MATR_ELEM=Smech,);
 SAgeom = ASSE_MATRICE(NUME_DDL=nddl,MATR_ELEM=Sgeom,);
 
 buckle = MODE_ITER_SIMULT(INFO=1,
-                        MATR_A = SAmech,
-                        MATR_B = SAgeom,
+                        MATR_RIGI = SAmech,
+                        MATR_RIGI_GEOM = SAgeom,
                         METHODE = 'SORENSEN',
                         PREC_SOREN=2e-16,
                         NMAX_ITER_SOREN=50,
-                        TYPE_RESU= 'MODE_FLAMB',
-                        CALC_FREQ = _F(OPTION = 'PLUS_PETITE',NMAX_FREQ=10,),);
+                        TYPE_RESU= 'MODE_FLAMB')
 
 IMPR_RESU(FORMAT='MED',
         UNITE=82,
