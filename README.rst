@@ -16,6 +16,12 @@ Installation
     pip install -r requirements.txt
     python setup.py install 
 
+Useful Tips
+***********
+* to concatenate all result protocols with ending '.rst' one could run::
+
+    find . -name '*.rst' -exec cat {} +
+
 Important Links
 ***************
 
