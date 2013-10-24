@@ -578,7 +578,6 @@ class AsterClient(object):
         # Enqueue jobs
         for calc in self.executions_nested:
             # remove logger object if already hase one
-            calc.unset_logger()
             task_queue.put(calc)
         # Start consumers
         consumers = []
