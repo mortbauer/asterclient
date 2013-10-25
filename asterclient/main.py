@@ -404,6 +404,13 @@ class AsterClient(object):
                     inputfiles.append(self._abspath(fpath))
                 calc['inputfiles'] = inputfiles
             calcs.append(calc)
+            # check if resultfile section is correct
+            if 'resultfiles' in calc:
+                for res in calc['resultfiles']:
+                    if not 'name' in res and not 'funit' in res and not 'glob' in res:
+                        raise AsterClientException(
+                            'a resultfile entry needs at least one of the'
+                            'following fields: name,funit, glob')
         return calcs
 
     @property
@@ -794,31 +801,19 @@ class Calculation(object):
         # the resultfiles need already to be created for fortran
         # create a list of files which need to be copied to the
         # resultdirectory
-        if self.resultfiles:
-            for key,f in self.calculation['resultfiles'].items():
-                # result files for acces through fortran
-                if type(f) == int:
-                    name = 'fort.%s'%f
-                    # touch the file
-                    with open(os.path.join(self.buildpath,name),'w') as f:
-                        os.utime(f.name, None)
+        for f in self.resultfiles:
+            # result files for acces through fortran
+            if 'funit' in f:
+                name = 'fort.%s'%f['funit']
+                # touch the file
+                with open(os.path.join(self.buildpath,name),'w') as f:
+                    os.utime(f.name, None)
 
     @property
     def resultfiles(self):
-        if self._resultfiles:
-            return self._resultfiles
-        else:
-            resultfiles = {}
-            if 'resultfiles' in self.calculation:
-                for key,f in self.calculation['resultfiles'].items():
-                    # result files for acces through fortran
-                    if type(f) == int:
-                        name = 'fort.%s'%f
-                        resultfiles[key] = name
-                    else:
-                        resultfiles[key] = f
-            self._resultfiles = resultfiles
-            return self._resultfiles
+        if not self._resultfiles:
+            self._resultfiles = self.calculation.get('resultfiles',[])
+        return self._resultfiles
 
     def _copy_additional_inputfiles(self):
         if 'inputfiles' in self.calculation:
@@ -966,10 +961,23 @@ class Calculation(object):
         self.setloglevel()
         self._prepare_outputpath()
         # try to copy results even if errors occured
-        for name,fpath in self.resultfiles.items():
-            for f in glob.glob(os.path.join(self.buildpath,fpath)):
-                outname = os.path.basename(f)
-                self._copyresult(f,os.path.join(self.outputpath,outname))
+        for res in self.resultfiles:
+            if 'funit' in res:
+                fortname = 'fort.%s'%res['funit']
+                self._copyresult(
+                    os.path.join(self.buildpath,fortname),
+                    os.path.join(self.outputpath,res.get('name',fortname))
+                )
+            elif 'glob' in res:
+                for f in glob.glob(os.path.join(self.buildpath,res['glob'])):
+                    self._copyresult(
+                        f,os.path.join(self.outputpath,os.path.basename(f))
+                    )
+            elif 'name' in res:
+                self._copyresult(
+                    os.path.join(self.buildpath,res['name']),
+                    os.path.join(self.outputpath,res['name'])
+                )
 
         # copy additional inputfiles as well
         for f in self.calculation.get('inputfiles',[]):
