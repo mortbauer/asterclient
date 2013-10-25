@@ -280,6 +280,7 @@ class AsterClient(object):
     def __init__(self,options,logger=None):
         self.options = options
         self._basepath = None
+        self._outputpath = None
         self.logger = logger
         self._set_logger()
         self._studies_to_run = None
@@ -298,14 +299,28 @@ class AsterClient(object):
         self._manager = multiprocessing.Manager()
         self._log_queue  = self._manager.Queue(-1)
         self.loglistener = QueueListener(self._log_queue, *self.logger.handlers)
+        self._absolutize_codeaster_options_paths()
         # start the log listener
         # need to be done from the caller
         #self.loglistener.start()
 
+    def _eval_path(self,path):
+        return os.path.expandvars(os.path.expanduser(path))
+
+    def _absolutize_codeaster_options_paths(self):
+        o = self.options
+        o['aster_root'] = self._abspath(o['aster_root'])
+        for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
+            o[pathkey] = os.path.join(
+                o['aster_root'],o['version'],self._eval_path(o[pathkey]))
+        o['rep_outils'] = os.path.join(
+            o['aster_root'],self._eval_path(o['rep_outils']))
+
     @property
     def basepath(self):
         if not self._basepath:
-            self._basepath = os.path.abspath(self.options.get('srcdir','.'))
+            self._basepath = os.path.abspath(
+                self._eval_path(self.options.get('srcdir','.')))
             # add the basepath to the sys path
             sys.path.append(self._basepath)
             # also add the path were we are right now
@@ -314,9 +329,9 @@ class AsterClient(object):
 
     @property
     def outputpath(self):
-        if not os.path.isabs(self.options['outdir']):
-            return os.path.join(
-                self.basepath,self.options["outdir"])
+        if not self._outputpath:
+            self._outputpath = self._abspath(self.options["outdir"])
+        return self._outputpath
 
     def _set_logger(self):
         if not self.logger:
@@ -350,10 +365,7 @@ class AsterClient(object):
             self.logger = logger
 
     def _abspath(self,path):
-        if os.path.isabs(path):
-            return path
-        else:
-            return os.path.abspath(os.path.join(self.basepath,path))
+        return os.path.join(self.basepath,self._eval_path(path))
 
     @property
     def calculationsdict(self):
@@ -662,22 +674,12 @@ class Calculation(object):
         self._buildpath = None
         self._remove_at_exit = []
         self._outputpath = None
-        self._absolutize_option_paths()
 
     def copy(self):
         return Calculation(
             self.config,self.study,self.calculation,
             self._queue,self.basepath,self.needs
         )
-
-    def _absolutize_option_paths(self):
-        for pathkey in ['bibpyt','cata','elements','rep_mat','rep_dex','aster']:
-            if not os.path.isabs(self.config[pathkey]):
-                self.config[pathkey] = os.path.join(self.config['aster_root'],
-                    self.config['version'],self.config[pathkey])
-        if not os.path.isabs(self.config['rep_outils']):
-            self.config['rep_outils'] = os.path.join(
-                self.config['aster_root'],self.config['rep_outils'])
 
     @property
     def relpath(self):
@@ -719,7 +721,6 @@ class Calculation(object):
 
     def __str__(self):
         return '<Calculation: %s>'%self.name
-
 
     def __getstate__(self):
         d = self.__dict__.copy()
@@ -954,7 +955,6 @@ class Calculation(object):
         self.setloglevel()
         self.init()
         self.logger.info('prepared run.sh in "{0}"'.format(self.buildpath))
-
 
     def remove_tmp(self):
         for f in self._remove_at_exit:
