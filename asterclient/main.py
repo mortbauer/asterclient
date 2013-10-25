@@ -193,7 +193,7 @@ class Parser(object):
             clientparser.add_argument('-c','--calculation',nargs='*',
                     help='run the these calculations')
             clientparser.add_argument('--clean',action='store_true',
-                    help='cleans existing workdir and resultdir')
+                    help='cleans existing resultdir')
             self._set_defaults(clientparser)
             self._clientparser = clientparser
         return self._clientparser
@@ -219,6 +219,10 @@ class Parser(object):
                     help='hide the output of code aster')
             run.add_argument('--dispatch',action='store_true',
                     help='start the calculation but doesn\'t wait for it to finnish')
+            run.add_argument('--keep-tmp',action='store_true',
+                    help='do not clean the temporary created working directory')
+            run.add_argument('--workdir',default='/tmp',
+                    help='specify the working directory')
             copyresult = subparsers.add_parser('copyresult',
                 parents=[self.preparser,self.clientparser],
                 help='copies the results to the result folder, useful if'
@@ -284,7 +288,6 @@ class AsterClient(object):
         self._executions_flat = None
         self._num_executions = None
         self._distributionfile = -1
-        self._remove_at_exit = []
         self._studieslist = None
         self._studiesdict = None
         self._calculationslist = None
@@ -589,9 +592,6 @@ class AsterClient(object):
         # Wait for all of the tasks to finish
         for c in consumers:
             c.join()
-        # remove tmp dir again
-        if not self.options.get("dispatch") and self.options.get("clean"):
-            self.remove_tmp()
 
     def run_sequential(self,**kwargs):
         def run_sequential_recursive(calcs):
@@ -601,8 +601,6 @@ class AsterClient(object):
                 calc(kill_event=self._kill_event,**kwargs)
                 run_sequential_recursive(calc.run_after)
         run_sequential_recursive(self.executions_nested)
-        if not self.options.get("dispatch") and self.options.get("clean"):
-            self.remove_tmp()
 
     def shutdown(self,sig,frame):
         self.logger.warn('will shutdown all processes, interrupt')
@@ -619,11 +617,6 @@ class AsterClient(object):
             self.logger.debug('starting to copy results for "{0}"'
                               .format(calc.name))
             calc.copy_results(**kwargs)
-
-    def remove_tmp(self):
-        for f in self._remove_at_exit:
-            shutil.rmtree(f)
-            self.logger.info('removing temporary object "{0}"'.format(f))
 
     def info(self):
         self._info_studies()
@@ -666,7 +659,7 @@ class Calculation(object):
         self._resultfiles = None
         self._logger = None
         self._queue = queue
-        self._workdir = None
+        self._buildpath = None
         self._remove_at_exit = []
         self._outputpath = None
         self._absolutize_option_paths()
@@ -694,23 +687,20 @@ class Calculation(object):
         )
 
     @property
-    def workdir(self):
-        if not self._workdir:
-            workdir = self.config.get('workdir')
-            if not workdir:
-                workdir = tempfile.mkdtemp(
-                    suffix='.asterclient',prefix=self.config.get('project'))
-                self._remove_at_exit.append(workdir)
-                self.logger.info('created temporary dir "{0}"'.format(workdir))
-            else:
-                if not os.path.isabs(workdir):
-                    workdir = os.path.join(self.basepath,workdir)
-            self._workdir = workdir
-        return self._workdir
-
-    @property
     def buildpath(self):
-        return os.path.join(self.workdir,self.relpath)
+        if not self._buildpath:
+            workdir = self.config.get('workdir','/tmp')
+            if not os.path.isabs(workdir):
+                workdir = os.path.join(self.basepath,workdir)
+            builddir = tempfile.mkdtemp(
+                suffix='.asterclient',
+                prefix='{0}:{1}-'.format(self.config.get('project'),self.name),
+                dir=workdir
+            )
+            self._remove_at_exit.append(builddir)
+            self.logger.info('created temporary dir "{0}"'.format(builddir))
+            self._buildpath = builddir
+        return self._buildpath
 
     @property
     def outputpath(self):
@@ -949,6 +939,9 @@ class Calculation(object):
                 if not self.config.get("dispatch"):
                     self._run_info()
                     self.copy_results()
+                    # also clean other stuff
+                    if not self.config.get('keep_tmp'):
+                        self.remove_tmp()
                     self._processing = False
                     self.finnished = True
                     self.logger.info('finnished processing')
@@ -961,6 +954,12 @@ class Calculation(object):
         self.setloglevel()
         self.init()
         self.logger.info('prepared run.sh in "{0}"'.format(self.buildpath))
+
+
+    def remove_tmp(self):
+        for f in self._remove_at_exit:
+            shutil.rmtree(f)
+            self.logger.info('removing temporary object "{0}"'.format(f))
 
     def copy_results(self,**kwargs):
         self.config.update(kwargs)
