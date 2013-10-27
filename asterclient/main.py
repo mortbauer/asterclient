@@ -223,6 +223,8 @@ class Parser(object):
                     help='do not clean the temporary created working directory')
             run.add_argument('--workdir',default='/tmp',
                     help='specify the working directory')
+            run.add_argument('--outdir',default='results',
+                    help='specify the output directory')
             copyresult = subparsers.add_parser('copyresult',
                 parents=[self.preparser,self.clientparser],
                 help='copies the results to the result folder, useful if'
