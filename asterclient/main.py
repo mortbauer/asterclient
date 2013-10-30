@@ -361,10 +361,7 @@ class AsterClient(object):
                 logger.setLevel('DEBUG')
                 console_handler.setLevel('DEBUG')
             if file_handler:
-                if hasattr(logging,loglevel):
-                    file_handler.setLevel(loglevel)
-                else:
-                    file_handler.setLevel('DEBUG')
+                file_handler.setLevel('DEBUG')
             if file_handler:
                 logger.addHandler(file_handler)
             logger.addHandler(console_handler)
@@ -918,19 +915,14 @@ class Calculation(object):
         if not self._logger:
             logger = logging.getLogger(self.name)
             handler = logutils.queue.QueueHandler(self._queue)
+            handler.setLevel(logging.DEBUG)
             logger.addHandler(handler)
+            logger.setLevel(logging.DEBUG)
             self._logger = logger
         return self._logger
 
-    def setloglevel(self):
-        try:
-            self.logger.setLevel(self.config.get('log_level','DEBUG'))
-        except:
-            self.logger.setLevel('DEBUG')
-
     def __call__(self,kill_event=None,**kwargs):
         self.config.update(kwargs)
-        self.setloglevel()
         self._kill_event = kill_event
         if not self._processing: # we certainly don't wanna run multiple times
             self._processing = True
@@ -953,7 +945,6 @@ class Calculation(object):
 
     def prepare(self,**kwargs):
         self.config.update(kwargs)
-        self.setloglevel()
         self.init()
         self.logger.info('prepared run.sh in "{0}"'.format(self.buildpath))
 
@@ -964,7 +955,6 @@ class Calculation(object):
 
     def copy_results(self,**kwargs):
         self.config.update(kwargs)
-        self.setloglevel()
         self._prepare_outputpath()
         # try to copy results even if errors occured
         for res in self.resultfiles:
