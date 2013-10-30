@@ -35,6 +35,12 @@ the parametric studies/distribution should probably be completely redesigned
   strain-stress-linear, buckling, ...
                  
 
+Inspect Code Aster Objects
+**************************
+
+One can just run a preparation for a calcualtion and drop itself into an ipdb
+session by import ipdb;ipdb.set_trace()
+
 Aster
 *****
 to run aster here, just make sure the REPE_OUT directory is empty and then fire
