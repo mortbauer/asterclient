@@ -195,6 +195,11 @@ class Parser(object):
                     help='run the these calculations')
             clientparser.add_argument('--clean',action='store_true',
                     help='cleans existing resultdir')
+            clientparser.add_argument('--workdir',default='/tmp',
+                    help='specify the working directory')
+            clientparser.add_argument('--outdir',default='results',
+                    help='specify the output directory')
+
             self._set_defaults(clientparser)
             self._clientparser = clientparser
         return self._clientparser
@@ -222,10 +227,6 @@ class Parser(object):
                     help='start the calculation but doesn\'t wait for it to finnish')
             run.add_argument('--keep-tmp',action='store_true',
                     help='do not clean the temporary created working directory')
-            run.add_argument('--workdir',default='/tmp',
-                    help='specify the working directory')
-            run.add_argument('--outdir',default='results',
-                    help='specify the output directory')
             run.add_argument('--no-bases',action='store_true',
                     help='do not copy the bases files like glob.1 or pick.1 ')
             copyresult = subparsers.add_parser('copyresult',
