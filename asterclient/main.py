@@ -223,6 +223,8 @@ class Parser(object):
                     help='do not clean the temporary created working directory')
             run.add_argument('--workdir',default='/tmp',
                     help='specify the working directory')
+            run.add_argument('--outdir',default='results',
+                    help='specify the output directory')
             copyresult = subparsers.add_parser('copyresult',
                 parents=[self.preparser,self.clientparser],
                 help='copies the results to the result folder, useful if'
@@ -461,10 +463,10 @@ class AsterClient(object):
             else:
                 study_names.append(name)
 
-            meshfile = study.get('meshfile',self.options.get('meshfile'))
-            if not meshfile:
-                raise AsterClientException('no meshfile specified for "{0}"'.format(name))
-            study['meshfile'] = self._abspath(meshfile)
+            meshfiles = study.get('meshfiles',self.options.get('meshfiles'))
+            if not meshfiles:
+                raise AsterClientException('no meshfiles specified for "{0}"'.format(name))
+            study['meshfiles'] = {self._abspath(meshfile):v for meshfile,v in meshfiles.items()}
         # check if all studies have the same keys
         i = 0
         for studyx,studyy in zip(study_keys[:-1],study_keys[1:]):
@@ -485,10 +487,10 @@ class AsterClient(object):
         else:
             # we need to get the relevant data and create a study
             study = {'name':'','number':0}
-            meshfile = self.options.get('meshfile')
-            if not meshfile:
-                raise AsterClientException('no meshfile specified')
-            study['meshfile'] = self._abspath(meshfile)
+            meshfiles = self.options.get('meshfiles')
+            if not meshfiles:
+                raise AsterClientException('no meshfiles specified')
+            study['meshfiles'] = {self._abspath(meshfile):v for meshfile,v in meshfiles.items()}
         return [study]
 
     @property
@@ -775,9 +777,9 @@ class Calculation(object):
         # copy the elements catalog
         shutil.copyfile(
             self.config["elements"],os.path.join(self.buildpath,'elem.1'))
-        # copy meshfile
-        shutil.copyfile(self.study['meshfile'],
-                        os.path.join(self.buildpath,'fort.20'))
+        # copy meshfiles
+        for meshfile,v in self.study['meshfiles'].items():
+            shutil.copyfile(meshfile,os.path.join(self.buildpath,'fort.%s'%v))
         # copy commandfile
         shutil.copyfile(
             self.calculation['commandfile'],
@@ -995,11 +997,11 @@ class Calculation(object):
             os.path.join(self.outputpath,os.path.basename(
                 self.calculation['commandfile'])),
         )
-        self._copyresult(
-            os.path.join(self.buildpath,'fort.20'),
-            os.path.join(self.outputpath,os.path.basename(
-            self.config["meshfile"])),
-        )
+        for meshfile,v in self.study['meshfiles'].items():
+            self._copyresult(
+                os.path.join(self.buildpath,'fort.%s'%v),
+                os.path.join(self.outputpath,os.path.basename(meshfile)),
+            )
         if self.config["distributionfile"]:
             self._copyresult(
                 self.config["distributionfile"],
