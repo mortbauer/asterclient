@@ -123,7 +123,7 @@ class Parser(object):
     maybe i should just subclass argparse
     see also: http://stackoverflow.com/a/4042861
     """
-    def __init__(self,argv):
+    def __init__(self,argv,name='asterclient'):
         self.argv = argv
         self._preparser = None
         self._preoptions = None
@@ -133,12 +133,13 @@ class Parser(object):
         self._asterparser = None
         self._clientparser = None
         self._parser = None
+        self._name = name
 
     @property
     def preparser(self):
         if not self._preparser:
             # parser for the global options
-            preparser = argparse.ArgumentParser(add_help=False)
+            preparser = argparse.ArgumentParser(prog=self._name,add_help=False)
             preparser.add_argument('--log-level',default='INFO',
                 choices=['DEBUG', 'INFO', 'WARN','ERROR'],
                     help='specify the logging level')
@@ -152,7 +153,7 @@ class Parser(object):
     @property
     def asterparser(self):
         if not self._asterparser:
-            asterparser = argparse.ArgumentParser(add_help=False)
+            asterparser = argparse.ArgumentParser(prog=self._name,add_help=False)
             asterparser.add_argument('--bibpyt',
                 help="path to Code_Aster python source files")
             asterparser.add_argument('--memjeveux',type=int,
@@ -187,7 +188,7 @@ class Parser(object):
     @property
     def clientparser(self):
         if not self._clientparser:
-            clientparser = argparse.ArgumentParser(add_help=False)
+            clientparser = argparse.ArgumentParser(prog=self._name,add_help=False)
             clientparser.add_argument('-s','--study',nargs='*',
                     help='run the these studies')
             clientparser.add_argument('-c','--calculation',nargs='*',
@@ -201,7 +202,7 @@ class Parser(object):
     @property
     def parser(self):
         if not self._parser:
-            parser = argparse.ArgumentParser(parents=[self.preparser])
+            parser = argparse.ArgumentParser(prog=self._name,parents=[self.preparser])
             subparsers = parser.add_subparsers(dest='action')
             help = subparsers.add_parser('help',
                 parents=[self.preparser,self.asterparser,self.clientparser])
@@ -225,6 +226,8 @@ class Parser(object):
                     help='specify the working directory')
             run.add_argument('--outdir',default='results',
                     help='specify the output directory')
+            run.add_argument('--no-bases',action='store_true',
+                    help='do not copy the bases files like glob.1 or pick.1 ')
             copyresult = subparsers.add_parser('copyresult',
                 parents=[self.preparser,self.clientparser],
                 help='copies the results to the result folder, useful if'
@@ -1008,15 +1011,17 @@ class Calculation(object):
                 os.path.join(self.outputpath,os.path.basename(
                     self.config["distributionfile"]))
             )
-        # copy the zipped base
-        self._copyresult(
-            os.path.join(self.buildpath,'glob.1'),
-            os.path.join(self.outputpath,'glob.1.zip'),zipped=True
-        )
-        self._copyresult(
-            os.path.join(self.buildpath,'pick.1'),
-            os.path.join(self.outputpath,'pick.1.zip'),zipped=True
-        )
+
+        if not self.config.get('no_bases') and not self.calculation.get('no_bases'):
+            # copy the zipped base
+            self._copyresult(
+                os.path.join(self.buildpath,'glob.1'),
+                os.path.join(self.outputpath,'glob.1.zip'),zipped=True
+            )
+            self._copyresult(
+                os.path.join(self.buildpath,'pick.1'),
+                os.path.join(self.outputpath,'pick.1.zip'),zipped=True
+            )
         self.logger.info('copied results to "{0}"'.format(self.outputpath))
 
     def _copyresult(self,fromfile,tofile,zipped=False):
