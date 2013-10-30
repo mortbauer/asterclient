@@ -1025,10 +1025,10 @@ class Calculation(object):
         self.logger.info('copied results to "{0}"'.format(self.outputpath))
 
     def _copyresult(self,fromfile,tofile,zipped=False):
-        if self.success and os.path.getsize(fromfile) == 0:
-            self.logger.warn('result file "{0}" is empty'.format(tofile))
-        self.logger.debug('copiing "{0}"'.format(fromfile))
         try:
+            if self.success and os.path.getsize(fromfile) == 0:
+                self.logger.warn('result file "{0}" is empty'.format(tofile))
+            self.logger.debug('copiing "{0}"'.format(fromfile))
             if not zipped:
                 shutil.copyfile(fromfile,tofile)
             else:
