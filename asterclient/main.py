@@ -410,7 +410,7 @@ class AsterClient(object):
             calcs.append(calc)
             # check if resultfile section is correct
             if 'resultfiles' in calc:
-                if not type(calc['resultfiles'])==dict
+                if not type(calc['resultfiles'])==dict:
                     raise AsterClientException('resultfiles must be dict')
         return calcs
 
