@@ -981,7 +981,7 @@ class Calculation(object):
         self.config.update(kwargs)
         self._prepare_outputpath()
         # try to copy results even if errors occured
-        for res in self.resultfiles:
+        for res in self.resultfiles.values():
             for bpath,oupath in res:
                 self._copyresult(
                     os.path.join(bpath),
