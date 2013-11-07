@@ -38,6 +38,12 @@ the parametric studies/distribution should probably be completely redesigned
   nieed to be available for all calculations independetnly, or use the the
   injection you use now o select the study
 
+Inspect Code Aster Objects
+**************************
+
+One can just run a preparation for a calcualtion and drop itself into an ipdb
+session by import ipdb;ipdb.set_trace()
+
 Aster
 *****
 to run aster here, just make sure the REPE_OUT directory is empty and then fire
