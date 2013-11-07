@@ -293,6 +293,7 @@ class AsterClient(object):
         self._calculations_to_run = None
         self._executions_nested = None
         self._executions_flat = None
+        self._executions_by_study = None
         self._num_executions = None
         self._distributionfile = -1
         self._studieslist = None
@@ -580,9 +581,10 @@ class AsterClient(object):
     def _create_executions(self):
         executions = []
         executions_flat = []
+        executions_by_study = {}
         if self.studies_to_run:
             for study in self.studies_to_run:
-                tmp = {}
+                executions_by_study[study] = tmp = {}
                 for calc in self.calculations_to_run:
                     tmp[calc] = self.executionsdict[self._exname(study,calc)]
                 for calc in tmp.values():
@@ -595,6 +597,13 @@ class AsterClient(object):
         self._executions_nested = executions
         self._executions_flat = executions_flat
         self._num_executions = len(executions_flat)
+        self._executions_by_study = executions_by_study
+
+    @property
+    def executions_by_study(self):
+        if not self._executions_by_study:
+            self._create_executions()
+        return self._executions_by_study
 
     def run_parallel(self,**kwargs):
         task_queue = multiprocessing.Queue()

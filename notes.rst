@@ -34,6 +34,9 @@ the parametric studies/distribution should probably be completely redesigned
   be imported by other modules for different calculations, eg:
   strain-stress-linear, buckling, ...
                  
+* the selection of the study should be done over sys.args, since the tudies
+  nieed to be available for all calculations independetnly, or use the the
+  injection you use now o select the study
 
 Aster
 *****
