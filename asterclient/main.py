@@ -699,7 +699,7 @@ class Calculation(object):
 
     @property
     def relpath(self):
-        return os.path.join(self.studyrelname,self,calcrelname)
+        return os.path.join(self.studyrelname,self.calcrelname)
 
     @property
     def studyrelname(self):
