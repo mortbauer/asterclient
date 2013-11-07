@@ -699,10 +699,15 @@ class Calculation(object):
 
     @property
     def relpath(self):
-        return os.path.join(
-            '{0:0=2d}_{1}'.format(self.study['number'],self.study['name']),
-            '{0:0=2d}_{1}'.format(self.calculation['number'],self.calculation['name']),
-        )
+        return os.path.join(self.studyname,self,calcname)
+
+    @property
+    def studyname(self):
+        return '{0:0=2d}_{1}'.format(self.study['number'],self.study['name'])
+
+    @property
+    def calcname(self):
+        return '{0:0=2d}_{1}'.format(self.calculation['number'],self.calculation['name'])
 
     @property
     def buildpath(self):
