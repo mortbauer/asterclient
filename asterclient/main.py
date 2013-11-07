@@ -699,14 +699,14 @@ class Calculation(object):
 
     @property
     def relpath(self):
-        return os.path.join(self.studyname,self,calcname)
+        return os.path.join(self.studyrelname,self,calcrelname)
 
     @property
-    def studyname(self):
+    def studyrelname(self):
         return '{0:0=2d}_{1}'.format(self.study['number'],self.study['name'])
 
     @property
-    def calcname(self):
+    def calcrelname(self):
         return '{0:0=2d}_{1}'.format(self.calculation['number'],self.calculation['name'])
 
     @property
