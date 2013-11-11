@@ -979,7 +979,7 @@ class Calculation(object):
         self.config.update(kwargs)
         self._prepare_outputpath()
         # try to copy results even if errors occured
-        for res in self.resultfiles:
+        for name,res in self.resultfiles.items():
             if type(res) == list:
                 for bpath,oupath in res:
                     self._copyresult(
@@ -987,7 +987,10 @@ class Calculation(object):
                         os.path.join(oupath)
                     )
             else:
-                for f in glob.glob(os.path.join(self.buildpath,res)):
+                match = glob.glob(os.path.join(self.buildpath,res))
+                if len(match)==0:
+                    self.logger.warn('no match for {0}:"{1}"'.format(name,res))
+                for f in match:
                     self._copyresult(f,os.path.join(
                         self.outputpath,os.path.basename(f)))
         # copy additional inputfiles as well
