@@ -818,9 +818,10 @@ class Calculation(object):
         for files in self.resultfiles.values():
             # result files for acces through fortran
             # touch the file
-            for bpath,oupath in files:
-                with open(bpath,'w') as f:
-                    os.utime(f.name, None)
+            if type(files) == list:
+                for bpath,oupath in files:
+                    with open(bpath,'w') as f:
+                        os.utime(f.name, None)
 
     @property
     def resultfiles(self):
