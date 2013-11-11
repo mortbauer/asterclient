@@ -989,7 +989,6 @@ class Calculation(object):
                 for f in glob.glob(os.path.join(self.buildpath,res)):
                     self._copyresult(f,os.path.join(
                         self.outputpath,os.path.basename(f)))
-
         # copy additional inputfiles as well
         for f in self.calculation.get('inputfiles',[]):
             self._copyresult(f,
