@@ -95,6 +95,9 @@ class Consumer(multiprocessing.Process):
             except Exception as e:
                 self.logger.exception(
                     'calculation "{0}" failed'.format(next_task.name))
+            if not answer:
+                self.logger.warn('calculation {0} was unsuccesful, stopping'.format(next_task.name))
+                continue
             for calc in next_task.run_after:
                 if self.kill_event.is_set():
                     break
@@ -964,6 +967,7 @@ class Calculation(object):
                 else:
                     self.logger.info('dispatched run to process "{0}"'
                             .format(self.subprocess.pid))
+        return self.success
 
     def prepare(self,**kwargs):
         self.config.update(kwargs)
