@@ -4,5 +4,5 @@ __pycache__
 *.pyc
 asterclient.egg-info
 venv
-doc/_build/*
-examples/basic/results/*
+doc/_build
+examples/basic/results
