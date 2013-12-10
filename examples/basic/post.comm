@@ -1,0 +1,120 @@
+# bike-frame.comm is a code-aster command file for the name case of a bike frame
+# Start
+
+from math import *
+import datetime
+import numpy
+from copy import copy
+
+def nu(E,G):
+    return float(E)/(2*G)-1
+
+def ctl(F,uy,ux):
+    """ Berechnet die Tretlagersteifigkeit """
+    return abs(float(F)/(uy**2+ux**2)**0.5)
+
+def clk(F,u):
+    """ Berechnet die Lenkkopfsteifigkeit """
+    l2 = 400
+    return abs(float(F)/degrees(atan(float(u)/l2)))
+
+def title(string):
+    return '\n{0}\n{1}\n\n'.format(string,'#'*len(string))
+
+def write_si_vmises_max(f,si_vmises_max):
+    f.write('si_vmises_max = {0} N/mm^2\t'.format(si_vmises_max))
+    if si_vmises_max >= alu_Rp02:
+        f.write('Attention should be smaller then {0} N/mm²\n'.format(alu_Rp02))
+    else:
+        f.write('\n')
+
+def write_si_principal_max(f,si_principal_max):
+    f.write('si_principal_max = {0} N/mm^2'.format(si_principal_max))
+    if si_principal_max >= alu_Rp02:
+        f.write('\tAttention should be smaller then {0} N/mm²\n'.format(alu_Rp02))
+    else:
+        f.write('\n')
+
+def write_sixx_weld(f,sixx):
+    f.write('sixx_weld_max = {0} N/mm^2'.format(sixx))
+    if sixx >= sixx_weld_max_zul:
+        f.write('\tAttention should be smaller then {0} N/mm²\n'.format(sixx_weld_max_zul))
+    else:
+        f.write('\n')
+
+def write_buckling_ration(f,min_buckling_ratio):
+    f.write('minimal buckling ratio = {}\t'.format(min_buckling_ratio))
+    if abs(min_buckling_ratio) <=1:
+        f.write('Attention minimal buckling ratio is smaller than 1.\n')
+    else:
+        f.write('\n')
+
+
+
+POURSUITE(PAR_LOT='NON');
+
+IMPR_RESU(UNITE=40,FORMAT='RESULTAT',RESU=_F(RESULTAT=RESU,MAILLE='M101',NOM_CHAM='SIPM_ELNO'));
+
+weld_sxx=WELDN.EXTR_TABLE('SIXX').valeurs
+
+si_xx=SIGM.EXTR_COMP('SIXX',[]).valeurs
+si_yy=SIGM.EXTR_COMP('SIYY',[]).valeurs
+si_zz=SIGM.EXTR_COMP('SIZZ',[]).valeurs
+si_xy=SIGM.EXTR_COMP('SIXY',[]).valeurs
+si_xz=SIGM.EXTR_COMP('SIXZ',[]).valeurs
+si_yz=SIGM.EXTR_COMP('SIYZ',[]).valeurs
+
+si_vmises=VMIS.EXTR_COMP('X2',[]).valeurs
+si_vmises_max = si_vmises.max()
+si_principal_max = si_xx.max()
+
+crit_buckling_loads = [ abs(crit_bu['CHAR_CRIT',i]) for i in range(10)[1:] ]
+min_buckling_ratio = min(crit_buckling_loads)
+
+if 'lenkkopfsteifigkeit' == name:
+    m = MASS['MASSE',1]
+    with open('protocol_00_general.rst','w') as f:
+        f.write(title('mass'))
+        f.write('m = {0} kg'.format(m))
+        if m >= 2.5:
+            f.write('Attention should be smaller then 2.5 kg')
+        else:
+            f.write('\n')
+
+    with open('protocol_01_lenkkopfsteifigkeit.rst','w') as f:
+        f.write(title('lenkkopfsteifigkeit'))
+        u_mp = DISP['DX',1]
+        CLK = clk(100,u_mp)
+        STW = CLK/m
+        write_si_vmises_max(f,si_vmises_max)
+        write_si_principal_max(f,si_principal_max)
+        write_buckling_ration(f,min_buckling_ratio)
+        f.write('CLK = {0} Nm/°\t'.format(CLK))
+        if CLK >= 80 and CLK <= 120:
+            f.write('\n')
+        else:
+            f.write('Attention should be between 80 and 120 Nm/° \n')
+
+        f.write('STW = {0} Nm/°kg\t'.format(STW))
+        if STW >= 50 and STW <= 115:
+            f.write('\n')
+        else:
+            f.write('Attention should be between 50 and 115 Nm/°kg\n')
+
+elif 'tretlagersteifigkeit' == name:
+    with open('protocol_02_tretlagersteifigkeit.rst','w') as f:
+        f.write(title('tretlagersteifigkeit'))
+        write_si_vmises_max(f,si_vmises_max)
+        write_si_principal_max(f,si_principal_max)
+        write_buckling_ration(f,min_buckling_ratio)
+        uz_tret = DISP['DZ',1]
+        uy_tret = DISP['DX',1]
+        CTL = ctl(1000,uz_tret,uy_tret)
+        f.write('CTL = {0} Nm/°\t'.format(CTL))
+        if CTL >= 50 and CTL <= 100:
+            f.write('\n')
+        else:
+            f.write('Attention should be between 50 and 100 Nm/° \n')
+FIN();
+
+# vim: set filetype=python ts=4 sw=4 tw=0 :
