@@ -27,7 +27,6 @@ import logging.handlers
 import logutils.queue
 import configreader
 from . import translator
-from . import AsterClientException
 from pkg_resources import resource_stream
 
 RUNPY_TEMPLATE = """#!{aster}
@@ -118,6 +117,9 @@ class QueueListener(logutils.queue.QueueListener):
             if record.levelno < handler.level:
                 continue
             handler.handle(record)
+
+class AsterClientException(Exception):
+    pass
 
 class Parser(object):
     """

@@ -55,7 +55,6 @@ up::
     -rep_mat /data/opt/aster/STA11.2/materiau -rep_dex \
     /data/opt/aster/STA11.2/datg  -memjeveux 64.0 -tpmax 900
 
-
 Logical unit numbers
 ********************
 you can get a list of them from the file ``unites_logiques.tcl`` in the
